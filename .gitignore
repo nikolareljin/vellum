@@ -1,0 +1,6 @@
+/target
+/artifacts
+.env
+*.swp
+*.swo
+*~

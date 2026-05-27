@@ -1,0 +1,18 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+      - '*.*.*-rc*'
+      - '*.*.*-RC*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: nikolareljin/ci-helpers/.github/workflows/rust-release.yml@production
+    with:
+      bin_name: "skopos"
+      linux_gnu_aliases: "deb,pacman,yum,redhat"

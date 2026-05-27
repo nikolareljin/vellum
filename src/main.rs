@@ -4,6 +4,7 @@ mod about;
 mod app;
 mod highlight;
 mod image;
+mod links;
 mod parser;
 mod renderer;
 

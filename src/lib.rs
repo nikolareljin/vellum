@@ -1,5 +1,6 @@
 pub mod about;
 pub mod highlight;
 pub mod image;
+pub mod links;
 pub mod parser;
 pub mod renderer;

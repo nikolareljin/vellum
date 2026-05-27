@@ -20,6 +20,7 @@ use crate::image::ImageCache;
 use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
+use crate::search::{search_lines, SearchResult};
 use crate::video::{extract_thumbnail, is_video_src};
 
 /// A rendered line is either a text line or an inline image slot.
@@ -44,6 +45,11 @@ struct App {
     anchor_map: std::collections::HashMap<String, usize>,
     /// Keep temp files alive for the session (drop = delete)
     _thumb_files: Vec<tempfile::NamedTempFile>,
+    /// Search state
+    search_mode: bool,
+    search_query: String,
+    search_results: Vec<SearchResult>,
+    search_cursor: usize,
 }
 
 impl App {
@@ -65,6 +71,10 @@ impl App {
             link_cursor: None,
             anchor_map,
             _thumb_files: thumb_files,
+            search_mode: false,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_cursor: 0,
         }
     }
 
@@ -234,16 +244,31 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                 }
             }
 
-            // Status bar
+            // Status bar — shows search prompt when in search mode
             let total = app.lines.len();
             let pct = if total == 0 { 100 } else { ((app.scroll + app.viewport_height).min(total) * 100) / total };
-            let status = Line::from(vec![
-                Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
-                Span::raw(format!(
-                    "  line {}/{} ({}%)  │  j/k  g/G  Tab links  Enter follow  e code  q quit",
-                    app.scroll + 1, total, pct,
-                )),
-            ]);
+            let status = if app.search_mode {
+                Line::from(vec![
+                    Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::Yellow)),
+                    Span::raw(format!("{}_", app.search_query)),
+                ])
+            } else if !app.search_results.is_empty() {
+                Line::from(vec![
+                    Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                    Span::raw(format!(
+                        "  [{}/{}] \"{}\"  │  n/N next/prev  Esc clear",
+                        app.search_cursor + 1, app.search_results.len(), app.search_query,
+                    )),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                    Span::raw(format!(
+                        "  {}/{} ({}%)  │  j/k  g/G  Tab  /search  e code  q quit",
+                        app.scroll + 1, total, pct,
+                    )),
+                ])
+            };
             f.render_widget(Paragraph::new(status), chunks[1]);
 
             let mut scrollbar_state = ScrollbarState::new(app.lines.len()).position(app.scroll);
@@ -258,6 +283,55 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
             match event::read()? {
                 Event::Key(KeyEvent { code, modifiers, .. }) => match (code, modifiers) {
                     (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
+                    // Search mode input
+                    (KeyCode::Char(ch), _) if app.search_mode => {
+                        app.search_query.push(ch);
+                    }
+                    (KeyCode::Backspace, _) if app.search_mode => {
+                        app.search_query.pop();
+                    }
+                    (KeyCode::Enter, _) if app.search_mode => {
+                        app.search_mode = false;
+                        // Run search against text lines only
+                        let text_lines: Vec<ratatui::text::Line> = app.lines.iter().filter_map(|dl| {
+                            if let DisplayLine::Text(l) = dl { Some(l.clone()) } else { None }
+                        }).collect();
+                        app.search_results = search_lines(&text_lines, &app.search_query);
+                        app.search_cursor = 0;
+                        if let Some(r) = app.search_results.first() {
+                            app.scroll = r.line_index.min(app.lines.len().saturating_sub(app.viewport_height));
+                        }
+                    }
+                    (KeyCode::Esc, _) if app.search_mode => {
+                        app.search_mode = false;
+                        app.search_query.clear();
+                        app.search_results.clear();
+                    }
+                    (KeyCode::Esc, _) => {
+                        app.search_results.clear();
+                        app.search_cursor = 0;
+                    }
+                    // Search activation and navigation (normal mode)
+                    (KeyCode::Char('/'), _) => {
+                        app.search_mode = true;
+                        app.search_query.clear();
+                        app.search_results.clear();
+                    }
+                    (KeyCode::Char('n'), _) => {
+                        if !app.search_results.is_empty() {
+                            app.search_cursor = (app.search_cursor + 1) % app.search_results.len();
+                            let idx = app.search_results[app.search_cursor].line_index;
+                            app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
+                        }
+                    }
+                    (KeyCode::Char('N'), _) => {
+                        if !app.search_results.is_empty() {
+                            let len = app.search_results.len();
+                            app.search_cursor = if app.search_cursor == 0 { len - 1 } else { app.search_cursor - 1 };
+                            let idx = app.search_results[app.search_cursor].line_index;
+                            app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
+                        }
+                    }
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => app.scroll_down(1),
                     (KeyCode::Char('k'), _) | (KeyCode::Up, _) => app.scroll_up(1),
                     (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => app.page_down(),

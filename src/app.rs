@@ -320,9 +320,13 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Auto-detect best image protocol (Kitty → Sixel → iTerm2 → halfblock)
-    let picker = Picker::from_query_stdio()
-        .unwrap_or_else(|_| Picker::halfblocks());
+    // Auto-detect best image protocol (Kitty → Sixel → iTerm2 → halfblock).
+    // VELLUM_PROTOCOL=halfblocks skips the terminal query (useful for recording / CI).
+    let picker = if std::env::var("VELLUM_PROTOCOL").as_deref() == Ok("halfblocks") {
+        Picker::halfblocks()
+    } else {
+        Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+    };
 
     let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
 

@@ -4,7 +4,7 @@
   <img src="assets/img/logo.png" alt="vellum logo" width="128"/>
 </p>
 
-[![Rust](https://github.com/nikolareljin/vellum/actions/workflows/rust.yml/badge.svg)](https://github.com/nikolareljin/vellum/actions/workflows/rust.yml)
+[![CI](https://github.com/nikolareljin/vellum/actions/workflows/ci.yml/badge.svg)](https://github.com/nikolareljin/vellum/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Rich Markdown viewer for the terminal. Renders headings, paragraphs, **bold/italic/strikethrough**, `inline code`, fenced code blocks with syntax highlighting, tables, lists, block quotes, images, and clickable links — all in a full TUI, without leaving your shell.
@@ -13,7 +13,9 @@ Rich Markdown viewer for the terminal. Renders headings, paragraphs, **bold/ital
 vellum README.md
 ```
 
-![vellum demo](docs/screenshots/demo.png)
+<p align="center">
+  <img src="docs/screenshots/demo.gif" alt="vellum demo" width="800"/>
+</p>
 
 ## Features
 

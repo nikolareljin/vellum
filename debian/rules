@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export CARGO_HOME = $(CURDIR)/debian/.cargo
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release
+
+override_dh_auto_test:
+	cargo test
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/vellum \
+		$(DESTDIR)/usr/bin/vellum
+	install -D -m 0644 README.md \
+		$(DESTDIR)/usr/share/doc/vellum/README.md
+
+override_dh_auto_clean:
+	cargo clean || true

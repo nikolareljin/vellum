@@ -1,0 +1,20 @@
+name: deb-build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "[0-9]*.[0-9]*.[0-9]*-rc*"
+      - "[0-9]*.[0-9]*.[0-9]*-RC*"
+
+jobs:
+  deb:
+    uses: nikolareljin/ci-helpers/.github/workflows/deb-build.yml@production
+    with:
+      # Install cargo-deb and use it instead of dpkg-buildpackage.
+      # GitHub Actions ubuntu runners already ship with a stable Rust toolchain.
+      prebuild_command: "cargo install cargo-deb --locked"
+      build_command: "cargo deb"
+      # cargo-deb writes to target/debian/; override the default ../**.deb glob
+      artifact_glob: "target/debian/*.deb"

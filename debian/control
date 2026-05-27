@@ -1,0 +1,25 @@
+Source: vellum
+Section: utils
+Priority: optional
+Maintainer: Nik Reljin <nikola.reljin@gmail.com>
+Build-Depends: debhelper-compat (= 13), rustc, cargo, libssl-dev, pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/nikolareljin/vellum
+Rules-Requires-Root: no
+
+Package: vellum
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: ffmpeg
+Description: Rich Markdown viewer for the terminal
+ Vellum is a terminal-based Markdown viewer that renders documents
+ with full GUI-like formatting inside a TUI (Text User Interface).
+ .
+ Features include:
+  - Headings (H1–H6) with distinct colours
+  - Syntax-highlighted fenced code blocks (base16-ocean.dark theme)
+  - Inline images via Kitty/Sixel/iTerm2/halfblock auto-detection
+  - Video thumbnail extraction via ffmpeg
+  - Link navigation (Tab/Shift+Tab cycle, Enter follows, anchor jumps)
+  - In-document incremental search (/, n/N, Esc)
+  - Code-view mode (spawns $EDITOR / bat / less)

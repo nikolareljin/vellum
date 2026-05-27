@@ -25,10 +25,10 @@ vellum README.md
 | Mouse scroll | ✅ Phase 1 |
 | Code-view mode (`e` key / `--code`) | ✅ Phase 1 |
 | `--page` author info | ✅ Phase 1 |
-| Inline images (Kitty/Sixel/iTerm2) | 🔜 Phase 2 |
-| Link navigation (Tab/Enter/OSC 8) | 🔜 Phase 3 |
-| Video thumbnails (ffmpeg) | 🔜 Phase 4 |
-| In-document search (`/`) | 🔜 Phase 6 |
+| Inline images (Kitty/Sixel/iTerm2) | ✅ Phase 2 |
+| Link navigation (Tab/Enter/anchor jumps) | ✅ Phase 3 |
+| Video thumbnails (ffmpeg) | ✅ Phase 4 |
+| In-document search (`/`) | ✅ Phase 6 |
 
 ## Requirements
 
@@ -38,11 +38,37 @@ vellum README.md
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```bash
+# Once a tap is published:
+brew tap nikolareljin/vellum https://github.com/nikolareljin/homebrew-vellum
+brew install vellum
+
+# Or install directly from the local formula:
+brew install --formula packaging/homebrew/vellum.rb
+```
+
+### DEB package (Debian / Ubuntu)
+
+```bash
+# Download from Releases, then:
+sudo apt install ./vellum_0.5.0_amd64.deb
+
+# Or build locally:
+cargo install cargo-deb --locked && cargo deb
+sudo apt install ./target/debian/vellum_0.5.0_amd64.deb
+```
+
+### From source
+
 ```bash
 cargo install --path .
 ```
 
 Or grab a pre-built binary from [Releases](https://github.com/nikolareljin/vellum/releases).
+
+See [`docs/packaging.md`](docs/packaging.md) for full packaging details.
 
 ## Usage
 
@@ -63,6 +89,11 @@ vellum --page              # show author info
 | `g` / `Home` | Top of document |
 | `G` / `End` | Bottom of document |
 | `e` | Code view (spawns `$EDITOR` / `bat` / `less`) |
+| `Tab` / `Shift+Tab` | Cycle links |
+| `Enter` | Follow link / confirm search |
+| `/` | Open incremental search |
+| `n` / `N` | Next / previous match |
+| `Esc` | Clear search |
 | `q` / `Ctrl+C` | Quit |
 | Mouse scroll | Scroll 3 lines |
 

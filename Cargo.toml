@@ -38,3 +38,22 @@ tempfile = "3"
 
 [dev-dependencies]
 pretty_assertions = "1"
+
+[package.metadata.deb]
+name            = "vellum"
+maintainer      = "Nik Reljin <nikola.reljin@gmail.com>"
+copyright       = "2026, Nik Reljin"
+license-file    = ["LICENSE", "4"]
+extended-description = """\
+Vellum is a rich Markdown viewer for the terminal.
+It renders headings, paragraphs, fenced code blocks with syntax
+highlighting, inline images (Kitty/Sixel/iTerm2/halfblock auto-detect),
+tables, links, and video thumbnails — all inside a full TUI built
+with ratatui + crossterm."""
+depends         = "$auto"
+section         = "utils"
+priority        = "optional"
+assets          = [
+  ["target/release/vellum", "usr/bin/vellum", "755"],
+  ["README.md",             "usr/share/doc/vellum/README.md",  "644"],
+]

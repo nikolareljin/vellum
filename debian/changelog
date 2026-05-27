@@ -1,0 +1,34 @@
+vellum (0.5.0-1) unstable; urgency=medium
+
+  * In-document search: / opens incremental search, n/N cycle matches
+  * Search status bar showing current match index and query
+
+ -- Nik Reljin <nikola.reljin@gmail.com>  Tue, 27 May 2026 00:00:00 +0000
+
+vellum (0.4.0-1) unstable; urgency=medium
+
+  * Video thumbnail extraction via ffmpeg
+  * Fixed argument injection in open_url (scheme allowlist + -- separator)
+
+ -- Nik Reljin <nikola.reljin@gmail.com>  Tue, 27 May 2026 00:00:00 +0000
+
+vellum (0.3.0-1) unstable; urgency=medium
+
+  * Link navigation: Tab/Shift+Tab cycle, Enter follows
+  * Anchor jumps to heading offset in rendered document
+
+ -- Nik Reljin <nikola.reljin@gmail.com>  Tue, 27 May 2026 00:00:00 +0000
+
+vellum (0.2.0-1) unstable; urgency=medium
+
+  * Inline image rendering via ratatui-image
+  * ImageCache for session-scoped image loading
+
+ -- Nik Reljin <nikola.reljin@gmail.com>  Tue, 27 May 2026 00:00:00 +0000
+
+vellum (0.1.0-1) unstable; urgency=low
+
+  * Initial release.
+  * Core Markdown TUI viewer with full scrolling.
+
+ -- Nik Reljin <nikola.reljin@gmail.com>  Tue, 27 May 2026 00:00:00 +0000

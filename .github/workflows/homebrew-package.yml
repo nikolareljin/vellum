@@ -1,0 +1,24 @@
+name: homebrew-package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "[0-9]*.[0-9]*.[0-9]*-rc*"
+      - "[0-9]*.[0-9]*.[0-9]*-RC*"
+
+jobs:
+  brew:
+    uses: nikolareljin/ci-helpers/.github/workflows/homebrew-package.yml@production
+    with:
+      name: "vellum"
+      desc: "Rich Markdown viewer for the terminal"
+      homepage: "https://github.com/nikolareljin/vellum"
+      license: "MIT"
+      # GitHub source archive for the pushed tag (no "v" prefix — matches our tagging convention)
+      tarball_url: "https://github.com/nikolareljin/vellum/archive/refs/tags/${{ github.ref_name }}.tar.gz"
+      formula_path: "packaging/homebrew/vellum.rb"
+      # Homebrew requires Rust to build; leave deps empty (users install Rust separately
+      # or via `brew install rust`). The formula itself declares depends_on "rust" => :build.
+      deps: ""

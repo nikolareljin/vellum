@@ -4,4 +4,5 @@ pub mod image;
 pub mod links;
 pub mod parser;
 pub mod renderer;
+pub mod search;
 pub mod video;

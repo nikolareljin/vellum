@@ -1,36 +1,51 @@
-use vellum::parser::parse;
 use vellum::highlight::highlight_code;
+use vellum::parser::parse;
+use vellum::theme::{CodeColors, Theme};
+
+// ── Highlight tests ───────────────────────────────────────────────────────────
 
 #[test]
 fn test_highlight_returns_lines() {
-    let lines = highlight_code("fn main() {}", Some("rust"));
+    let cc = CodeColors::default();
+    let lines = highlight_code("fn main() {}", Some("rust"), &cc);
     assert!(!lines.is_empty(), "should return at least one styled line");
     assert!(!lines[0].is_empty());
 }
 
 #[test]
 fn test_highlight_unknown_lang_falls_back() {
-    let lines = highlight_code("hello world", Some("nonexistent_lang_xyz"));
+    let cc = CodeColors::default();
+    let lines = highlight_code("hello world", Some("nonexistent_lang_xyz"), &cc);
     assert!(!lines.is_empty());
 }
 
 #[test]
 fn test_highlight_no_lang() {
-    let lines = highlight_code("plain text", None);
+    let cc = CodeColors::default();
+    let lines = highlight_code("plain text", None, &cc);
     assert!(!lines.is_empty());
 }
 
-use vellum::renderer::render_elements;
-use vellum::parser::{Element, Span};
+// ── Renderer tests ─────────────────────────────────────────────────────────────
+
 use ratatui::style::Modifier;
+use vellum::parser::{Element, Span};
+use vellum::renderer::render_elements;
 
 #[test]
 fn test_heading_h1_is_bold() {
-    let el = Element::Heading { level: 1, text: "Title".into() };
-    let lines = render_elements(&[el]);
+    let el = Element::Heading {
+        level: 1,
+        text: "Title".into(),
+    };
+    let theme = Theme::default();
+    let lines = render_elements(&[el], &theme);
     assert!(!lines.is_empty());
     assert!(
-        lines[0].spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+        lines[0]
+            .spans
+            .iter()
+            .any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
         "h1 should be bold"
     );
 }
@@ -38,25 +53,55 @@ fn test_heading_h1_is_bold() {
 #[test]
 fn test_hrule_contains_line_chars() {
     let el = Element::HRule;
-    let lines = render_elements(&[el]);
+    let theme = Theme::default();
+    let lines = render_elements(&[el], &theme);
     assert!(!lines.is_empty());
     let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(text.contains('─'), "hrule should contain box-drawing dashes");
+    assert!(
+        text.contains('─'),
+        "hrule should contain box-drawing dashes"
+    );
 }
 
 #[test]
 fn test_paragraph_plain_text() {
     let el = Element::Paragraph(vec![Span::Text("Hello".into())]);
-    let lines = render_elements(&[el]);
-    let text: String = lines.iter()
+    let theme = Theme::default();
+    let lines = render_elements(&[el], &theme);
+    let text: String = lines
+        .iter()
         .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
         .collect();
     assert!(text.contains("Hello"));
 }
 
 #[test]
+fn test_heading_h1_uses_theme_color() {
+    use ratatui::style::Color;
+    use vellum::theme::{HeadingColors, Rgb};
+
+    let mut theme = Theme::default();
+    // Override h1 to bright red
+    theme.headings = HeadingColors {
+        h1: Rgb(255, 0, 0),
+        ..HeadingColors::default()
+    };
+    let el = Element::Heading {
+        level: 1,
+        text: "Test".into(),
+    };
+    let lines = render_elements(&[el], &theme);
+    // At least one span should carry the overridden color
+    let has_red = lines.iter().any(|l| {
+        l.spans
+            .iter()
+            .any(|s| s.style.fg == Some(Color::Rgb(255, 0, 0)))
+    });
+    assert!(has_red, "H1 should use the theme headings.h1 color");
+}
+
+#[test]
 fn test_further_reading_renders_nine_link_lines() {
-    // Each list item must render as a separate visible line containing the link text.
     let md = concat!(
         "## Further reading\n\n",
         "- [`PLAN.md`](./PLAN.md) — full implementation plan, phase breakdown,\n",
@@ -75,40 +120,44 @@ fn test_further_reading_renders_nine_link_lines() {
         "  install\n",
         "- [`docs/kafka-design.md`](./docs/kafka-design.md) — where Kafka fits\n",
         "- [`docs/release-pipeline.md`](./docs/release-pipeline.md) — separate\n",
-        "  `netwise-ai-release` repo for distribution\n",
+        "  release notes and distribution details\n",
     );
     let elements = parse(md);
-    let lines = render_elements(&elements);
+    let theme = Theme::default();
+    let lines = render_elements(&elements, &theme);
 
-    // Collect non-empty line texts
     let visible: Vec<String> = lines
         .iter()
-        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
         .filter(|s: &String| !s.trim().is_empty())
         .collect();
 
-    // Count lines that contain a bullet + a link label
     let bullet_lines: Vec<&String> = visible.iter().filter(|s| s.contains('•')).collect();
     assert_eq!(
-        bullet_lines.len(), 9,
+        bullet_lines.len(),
+        9,
         "expected 9 bulleted item lines; got {}. Lines:\n{:#?}",
-        bullet_lines.len(), visible
+        bullet_lines.len(),
+        visible
     );
 }
 
 #[test]
 fn test_full_readme_further_reading_nine_bullets() {
-    use vellum::parser::parse;
-    // Parse the FULL README and render it — then count bullet lines for Further reading
-    let md = include_str!("/home/nikos/Projects/netwise-ai/README.md");
+    let md = include_str!("../TEST.md");
     let elements = parse(md);
 
-    // Find Further reading List
     let fr_heading_pos = elements.iter().position(|e| {
         matches!(e, vellum::parser::Element::Heading { text, .. } if text.contains("Further reading"))
     }).expect("Further reading heading not found");
 
-    let list_el = elements.get(fr_heading_pos + 1)
+    let list_el = elements
+        .get(fr_heading_pos + 1)
         .expect("No element after Further reading heading");
 
     assert!(
@@ -116,16 +165,25 @@ fn test_full_readme_further_reading_nine_bullets() {
         "Expected List after heading, got: {list_el:?}"
     );
 
-    let list_lines = render_elements(std::slice::from_ref(list_el));
-    let bullet_lines: Vec<_> = list_lines.iter()
+    let theme = Theme::default();
+    let list_lines = render_elements(std::slice::from_ref(list_el), &theme);
+    let bullet_lines: Vec<_> = list_lines
+        .iter()
         .filter(|l| l.spans.iter().any(|s| s.content.contains('•')))
         .collect();
 
     assert_eq!(
-        bullet_lines.len(), 9,
-        "Expected 9 bullet lines from full-README parse; got {}.\nAll lines: {:#?}",
         bullet_lines.len(),
-        list_lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>()
+        9,
+        "Expected 9 bullet lines from TEST.md parse; got {}.\nAll lines: {:#?}",
+        bullet_lines.len(),
+        list_lines
+            .iter()
+            .map(|l| l
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>())
+            .collect::<Vec<_>>()
     );
 }
-

@@ -1,0 +1,39 @@
+{
+  "headings": {
+    "h1": "#b58900",
+    "h2": "#268bd2",
+    "h3": "#859900",
+    "h4": "#2aa198",
+    "h5": "#6c71c4",
+    "h6": "#839496"
+  },
+  "code": {
+    "bg": "#002b36",
+    "header_bg": "#073642",
+    "default_theme": "Solarized (dark)",
+    "by_language": {
+      "rust": "base16-ocean.dark",
+      "python": "Solarized (dark)",
+      "javascript": "Solarized (dark)",
+      "typescript": "Solarized (dark)",
+      "bash": "Solarized (dark)",
+      "sh": "Solarized (dark)"
+    },
+    "label_fg": "#93a1a1"
+  },
+  "inline": {
+    "code_fg": "#b58900",
+    "code_bg": "#073642",
+    "link": "#268bd2",
+    "strikethrough": "#586e75"
+  },
+  "blocks": {
+    "blockquote": "#268bd2",
+    "hrule": "#073642",
+    "table_border": "#586e75",
+    "table_header": "#b58900",
+    "list_bullet": "#2aa198",
+    "image_icon": "#6c71c4",
+    "image_alt": "#93a1a1"
+  }
+}

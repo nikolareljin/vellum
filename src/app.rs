@@ -10,7 +10,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::Terminal;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
@@ -21,6 +23,7 @@ use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
 use crate::search::{search_lines, SearchResult};
+use crate::theme::Theme;
 use crate::video::extract_thumbnail;
 
 // ── Navigation history ────────────────────────────────────────────────────────
@@ -35,7 +38,7 @@ pub enum NavAction {
 
 /// Browser-like navigation history capped at 20 entries each direction.
 pub struct NavHistory {
-    pub back:    std::collections::VecDeque<PathBuf>,
+    pub back: std::collections::VecDeque<PathBuf>,
     pub forward: std::collections::VecDeque<PathBuf>,
 }
 
@@ -43,12 +46,17 @@ impl NavHistory {
     const MAX: usize = 20;
 
     pub fn new() -> Self {
-        Self { back: Default::default(), forward: Default::default() }
+        Self {
+            back: Default::default(),
+            forward: Default::default(),
+        }
     }
 
     /// Navigate to a new file: push `current` onto back stack, clear forward.
     pub fn push_back(&mut self, current: PathBuf) {
-        if self.back.len() == Self::MAX { self.back.pop_front(); }
+        if self.back.len() == Self::MAX {
+            self.back.pop_front();
+        }
         self.back.push_back(current);
         self.forward.clear();
     }
@@ -57,7 +65,9 @@ impl NavHistory {
     /// Returns `None` when already at the oldest entry.
     pub fn go_back(&mut self, current: PathBuf) -> Option<PathBuf> {
         let prev = self.back.pop_back()?;
-        if self.forward.len() == Self::MAX { self.forward.pop_front(); }
+        if self.forward.len() == Self::MAX {
+            self.forward.pop_front();
+        }
         self.forward.push_back(current);
         Some(prev)
     }
@@ -66,7 +76,9 @@ impl NavHistory {
     /// Returns `None` when there is no forward history.
     pub fn go_forward(&mut self, current: PathBuf) -> Option<PathBuf> {
         let next = self.forward.pop_back()?;
-        if self.back.len() == Self::MAX { self.back.pop_front(); }
+        if self.back.len() == Self::MAX {
+            self.back.pop_front();
+        }
         self.back.push_back(current);
         Some(next)
     }
@@ -77,7 +89,10 @@ impl NavHistory {
 pub enum DisplayLine {
     Text(Line<'static>),
     /// Image: the src path and desired height in terminal rows.
-    Image { src: String, height: u16 },
+    Image {
+        src: String,
+        height: u16,
+    },
 }
 
 struct App {
@@ -166,9 +181,15 @@ impl App {
         self.scroll = self.scroll.saturating_sub(n);
     }
 
-    fn page_down(&mut self) { self.scroll_down(self.viewport_height.saturating_sub(2)); }
-    fn page_up(&mut self) { self.scroll_up(self.viewport_height.saturating_sub(2)); }
-    fn goto_top(&mut self) { self.scroll = 0; }
+    fn page_down(&mut self) {
+        self.scroll_down(self.viewport_height.saturating_sub(2));
+    }
+    fn page_up(&mut self) {
+        self.scroll_up(self.viewport_height.saturating_sub(2));
+    }
+    fn goto_top(&mut self) {
+        self.scroll = 0;
+    }
     fn goto_bottom(&mut self) {
         self.scroll = self.max_scroll();
     }
@@ -182,6 +203,7 @@ impl App {
 fn build_display_lines(
     elements: &[Element],
     base_dir: &Path,
+    theme: &Theme,
 ) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
     let mut out = Vec::new();
     let mut thumb_files = Vec::new();
@@ -194,12 +216,17 @@ fn build_display_lines(
                 // Remote URLs and missing files fall back to the styled text
                 // placeholder so they don't leave an invisible blank gap.
                 if is_local_file_readable(&resolved) {
-                    out.push(DisplayLine::Image { src: resolved, height: 10 });
+                    out.push(DisplayLine::Image {
+                        src: resolved,
+                        height: 10,
+                    });
+                    out.push(DisplayLine::Text(Line::from("")));
                 } else {
-                    let text_lines = render_elements(std::slice::from_ref(el));
-                    for l in text_lines { out.push(DisplayLine::Text(l)); }
+                    let text_lines = render_elements(std::slice::from_ref(el), theme);
+                    for l in text_lines {
+                        out.push(DisplayLine::Text(l));
+                    }
                 }
-                out.push(DisplayLine::Text(Line::from("")));
             }
             Element::Video { src } => {
                 // Parser already classified this as video; extract thumbnail.
@@ -207,20 +234,27 @@ fn build_display_lines(
                 match extract_thumbnail(&resolved) {
                     Ok(tmp) => {
                         let path = tmp.path().to_string_lossy().to_string();
-                        out.push(DisplayLine::Image { src: path, height: 10 });
+                        out.push(DisplayLine::Image {
+                            src: path,
+                            height: 10,
+                        });
                         out.push(DisplayLine::Text(Line::from("")));
                         thumb_files.push(tmp);
                     }
                     Err(_) => {
                         // ffmpeg missing or file unreadable — text placeholder
-                        let text_lines = render_elements(std::slice::from_ref(el));
-                        for l in text_lines { out.push(DisplayLine::Text(l)); }
+                        let text_lines = render_elements(std::slice::from_ref(el), theme);
+                        for l in text_lines {
+                            out.push(DisplayLine::Text(l));
+                        }
                     }
                 }
             }
             _ => {
-                let text_lines = render_elements(std::slice::from_ref(el));
-                for l in text_lines { out.push(DisplayLine::Text(l)); }
+                let text_lines = render_elements(std::slice::from_ref(el), theme);
+                for l in text_lines {
+                    out.push(DisplayLine::Text(l));
+                }
             }
         }
     }
@@ -251,16 +285,10 @@ fn follow_link(href: &str, file: &Path) -> Option<std::path::PathBuf> {
 
 /// Return the href of the first link whose rendered line is within ±1 of
 /// `target_line`.  Used to map a mouse-click row to the nearest link.
-fn link_at_line(
-    doc_links: &[(String, usize)],
-    target_line: usize,
-) -> Option<&str> {
+fn link_at_line(doc_links: &[(String, usize)], target_line: usize) -> Option<&str> {
     doc_links
         .iter()
-        .min_by_key(|(_, line)| {
-            
-            (*line).abs_diff(target_line)
-        })
+        .min_by_key(|(_, line)| (*line).abs_diff(target_line))
         .filter(|(_, line)| {
             let diff = (*line).abs_diff(target_line);
             diff <= 1
@@ -305,18 +333,26 @@ fn resolve_path(src: &str, base_dir: &Path) -> String {
     }
 }
 
-pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
+pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<NavAction> {
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
     let base_dir = file.parent().unwrap_or(Path::new("."));
-    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir);
+    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme);
     let doc_links = collect_links(&elements);
     let anchor_map = build_anchor_map(&elements);
-    let fname = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let fname = file
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -447,7 +483,7 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                             (b, f) => format!("  ← [{}]  → [{}]", b, f),
                         };
                         Span::raw(format!(
-                            "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  / search  e code  q quit{}",
+                            "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  / search  e code  a about  q quit{}",
                             app.scroll + 1, total, pct, nav_hint,
                         ))
                     },
@@ -465,7 +501,9 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
-                Event::Key(KeyEvent { code, modifiers, .. }) => match (code, modifiers) {
+                Event::Key(KeyEvent {
+                    code, modifiers, ..
+                }) => match (code, modifiers) {
                     (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         break 'main NavAction::Quit;
                     }
@@ -483,13 +521,23 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                     }
                     (KeyCode::Enter, _) if app.search_mode => {
                         app.search_mode = false;
-                        let text_lines: Vec<ratatui::text::Line> = app.lines.iter()
-                            .filter_map(|dl| if let DisplayLine::Text(l) = dl { Some(l.clone()) } else { None })
+                        let text_lines: Vec<ratatui::text::Line> = app
+                            .lines
+                            .iter()
+                            .filter_map(|dl| {
+                                if let DisplayLine::Text(l) = dl {
+                                    Some(l.clone())
+                                } else {
+                                    None
+                                }
+                            })
                             .collect();
                         app.search_results = search_lines(&text_lines, &app.search_query);
                         app.search_cursor = 0;
                         if let Some(r) = app.search_results.first() {
-                            app.scroll = r.line_index.min(app.lines.len().saturating_sub(app.viewport_height));
+                            app.scroll = r
+                                .line_index
+                                .min(app.lines.len().saturating_sub(app.viewport_height));
                         }
                     }
                     (KeyCode::Esc, _) if app.search_mode => {
@@ -509,48 +557,54 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                         app.search_query.clear();
                         app.search_results.clear();
                     }
-                    (KeyCode::Char('n'), _)
-                        if !app.search_results.is_empty() => {
-                            app.search_cursor = (app.search_cursor + 1) % app.search_results.len();
-                            let idx = app.search_results[app.search_cursor].line_index;
-                            app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
-                        }
-                    (KeyCode::Char('N'), _)
-                        if !app.search_results.is_empty() => {
-                            let len = app.search_results.len();
-                            app.search_cursor = if app.search_cursor == 0 { len - 1 } else { app.search_cursor - 1 };
-                            let idx = app.search_results[app.search_cursor].line_index;
-                            app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
-                        }
+                    (KeyCode::Char('n'), _) if !app.search_results.is_empty() => {
+                        app.search_cursor = (app.search_cursor + 1) % app.search_results.len();
+                        let idx = app.search_results[app.search_cursor].line_index;
+                        app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
+                    }
+                    (KeyCode::Char('N'), _) if !app.search_results.is_empty() => {
+                        let len = app.search_results.len();
+                        app.search_cursor = if app.search_cursor == 0 {
+                            len - 1
+                        } else {
+                            app.search_cursor - 1
+                        };
+                        let idx = app.search_results[app.search_cursor].line_index;
+                        app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
+                    }
 
                     // ── Scroll ───────────────────────────────────────────────
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => app.scroll_down(1),
                     (KeyCode::Char('k'), _) | (KeyCode::Up, _) => app.scroll_up(1),
-                    (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => app.page_down(),
-                    (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => app.page_up(),
+                    (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                        app.page_down()
+                    }
+                    (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+                        app.page_up()
+                    }
                     (KeyCode::Char('g'), _) | (KeyCode::Home, _) => app.goto_top(),
                     (KeyCode::Char('G'), _) | (KeyCode::End, _) => app.goto_bottom(),
 
                     // ── Link cycling ─────────────────────────────────────────
-                    (KeyCode::Tab, _)
-                        if !app.doc_links.is_empty() => {
-                            app.link_cursor = Some(match app.link_cursor {
-                                Some(i) => (i + 1) % app.doc_links.len(),
-                                None => 0,
-                            });
-                            let offset = app.doc_links[app.link_cursor.unwrap()].1;
-                            app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
-                        }
-                    (KeyCode::BackTab, _)
-                        if !app.doc_links.is_empty() => {
-                            let len = app.doc_links.len();
-                            app.link_cursor = Some(match app.link_cursor {
-                                Some(0) | None => len - 1,
-                                Some(i) => i - 1,
-                            });
-                            let offset = app.doc_links[app.link_cursor.unwrap()].1;
-                            app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
-                        }
+                    (KeyCode::Tab, _) if !app.doc_links.is_empty() => {
+                        app.link_cursor = Some(match app.link_cursor {
+                            Some(i) => (i + 1) % app.doc_links.len(),
+                            None => 0,
+                        });
+                        let offset = app.doc_links[app.link_cursor.unwrap()].1;
+                        app.scroll =
+                            offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                    }
+                    (KeyCode::BackTab, _) if !app.doc_links.is_empty() => {
+                        let len = app.doc_links.len();
+                        app.link_cursor = Some(match app.link_cursor {
+                            Some(0) | None => len - 1,
+                            Some(i) => i - 1,
+                        });
+                        let offset = app.doc_links[app.link_cursor.unwrap()].1;
+                        app.scroll =
+                            offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                    }
 
                     // ── Follow link (keyboard) ────────────────────────────────
                     (KeyCode::Enter, _) => {
@@ -558,7 +612,8 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                             let href = app.doc_links[i].0.clone();
                             if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
-                                    app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                                    app.scroll = offset
+                                        .min(app.lines.len().saturating_sub(app.viewport_height));
                                 }
                             } else if let Some(path) = follow_link(&href, file) {
                                 break 'main NavAction::GoTo(path);
@@ -569,10 +624,39 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                     // ── Code view ────────────────────────────────────────────
                     (KeyCode::Char('e'), _) => {
                         disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+                        execute!(
+                            terminal.backend_mut(),
+                            LeaveAlternateScreen,
+                            crossterm::event::DisableMouseCapture
+                        )?;
                         let _ = open_code_view(file);
                         enable_raw_mode()?;
-                        execute!(terminal.backend_mut(), EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+                        execute!(
+                            terminal.backend_mut(),
+                            EnterAlternateScreen,
+                            crossterm::event::EnableMouseCapture
+                        )?;
+                        terminal.clear()?;
+                    }
+
+                    // ── About page ───────────────────────────────────────────
+                    (KeyCode::Char('a'), _) => {
+                        disable_raw_mode()?;
+                        execute!(
+                            terminal.backend_mut(),
+                            LeaveAlternateScreen,
+                            crossterm::event::DisableMouseCapture
+                        )?;
+                        crate::about::print_page();
+                        println!("  Press Enter to return…");
+                        let mut input = String::new();
+                        let _ = std::io::stdin().read_line(&mut input);
+                        enable_raw_mode()?;
+                        execute!(
+                            terminal.backend_mut(),
+                            EnterAlternateScreen,
+                            crossterm::event::EnableMouseCapture
+                        )?;
                         terminal.clear()?;
                     }
                     _ => {}
@@ -589,7 +673,8 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                             let href = href.to_owned();
                             if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
-                                    app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                                    app.scroll = offset
+                                        .min(app.lines.len().saturating_sub(app.viewport_height));
                                 }
                             } else if let Some(path) = follow_link(&href, file) {
                                 break 'main NavAction::GoTo(path);
@@ -604,7 +689,11 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
     }; // end 'main loop
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture
+    )?;
 
     Ok(action)
 }
@@ -613,9 +702,13 @@ pub fn open_code_view(file: &Path) -> anyhow::Result<()> {
     let editor = std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
         .unwrap_or_else(|_| {
-            if which_exists("bat") { "bat".into() }
-            else if which_exists("less") { "less".into() }
-            else { "cat".into() }
+            if which_exists("bat") {
+                "bat".into()
+            } else if which_exists("less") {
+                "less".into()
+            } else {
+                "cat".into()
+            }
         });
     let status = std::process::Command::new(&editor).arg(file).status()?;
     if !status.success() {
@@ -625,6 +718,9 @@ pub fn open_code_view(file: &Path) -> anyhow::Result<()> {
 }
 
 fn which_exists(cmd: &str) -> bool {
-    std::process::Command::new("which").arg(cmd).output()
-        .map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new("which")
+        .arg(cmd)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }

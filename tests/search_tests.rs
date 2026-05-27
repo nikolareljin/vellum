@@ -16,7 +16,11 @@ fn test_search_finds_match() {
 
 #[test]
 fn test_search_case_insensitive() {
-    let lines = vec![Line::from("UPPER"), Line::from("lower"), Line::from("Mixed")];
+    let lines = vec![
+        Line::from("UPPER"),
+        Line::from("lower"),
+        Line::from("Mixed"),
+    ];
     let results = search_lines(&lines, "upper");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].line_index, 0);

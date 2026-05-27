@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-27
+
+### Added
+- JSON theme engine: `--theme <name>` CLI flag selects a full colour scheme
+- Three built-in themes: `dark` (default), `dracula`, `solarized`
+- User themes at `~/.config/vellum/themes/<name>.json` override built-ins
+- Per-language syntect theme override via `code.by_language` in theme JSON
+- `src/theme.rs`: `Theme`, `HeadingColors`, `CodeColors`, `InlineColors`, `BlockColors`, `Rgb`
+- Partial JSON supported — missing fields fill from dark-theme defaults via `#[serde(default)]`
+- In-app About page available from the `a` shortcut
+
+### Changed
+- `renderer.rs`: rendered Markdown colours now come from theme values
+- `highlight.rs`: `highlight_code()` now accepts `&CodeColors` for per-language theme selection
+- `app.rs`, `main.rs`: theme threaded through rendering pipeline
+
 ## [0.5.0] — 2026-05-27
 
 ### Added

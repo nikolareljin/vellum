@@ -9,6 +9,7 @@ mod parser;
 mod renderer;
 mod search;
 mod svg;
+mod theme;
 mod video;
 
 #[derive(Parser, Debug)]
@@ -18,6 +19,10 @@ pub struct Cli {
     #[arg(required_unless_present = "page")]
     pub file: Option<std::path::PathBuf>,
 
+    /// Colour theme: dark (default), dracula, solarized, or a name from ~/.config/vellum/themes/
+    #[arg(short = 't', long, value_name = "NAME")]
+    pub theme: Option<String>,
+
     /// Open in code view (spawns $EDITOR / bat / less)
     #[arg(short, long)]
     pub code: bool,
@@ -25,7 +30,6 @@ pub struct Cli {
     /// Show author and project info
     #[arg(long)]
     pub page: bool,
-
 }
 
 fn main() -> anyhow::Result<()> {
@@ -36,6 +40,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let theme = theme::Theme::load(cli.theme.as_deref())?;
     let file = cli.file.expect("file required when --page not set");
 
     if cli.code {
@@ -45,7 +50,7 @@ fn main() -> anyhow::Result<()> {
         let mut current = file.clone();
 
         loop {
-            match app::run(&current, &history)? {
+            match app::run(&current, &history, &theme)? {
                 app::NavAction::Quit => break,
                 app::NavAction::GoTo(next) => {
                     history.push_back(current.clone());
@@ -55,13 +60,11 @@ fn main() -> anyhow::Result<()> {
                     if let Some(prev) = history.go_back(current.clone()) {
                         current = prev;
                     }
-                    // Empty back stack → stay on current file (no-op)
                 }
                 app::NavAction::Forward => {
                     if let Some(next) = history.go_forward(current.clone()) {
                         current = next;
                     }
-                    // Empty forward stack → stay on current file (no-op)
                 }
             }
         }

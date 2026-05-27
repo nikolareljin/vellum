@@ -1,0 +1,39 @@
+{
+  "headings": {
+    "h1": "#ff79c6",
+    "h2": "#bd93f9",
+    "h3": "#50fa7b",
+    "h4": "#ffb86c",
+    "h5": "#8be9fd",
+    "h6": "#f8f8f2"
+  },
+  "code": {
+    "bg": "#282a36",
+    "header_bg": "#44475a",
+    "default_theme": "base16-ocean.dark",
+    "by_language": {
+      "rust": "base16-ocean.dark",
+      "python": "base16-ocean.dark",
+      "javascript": "base16-ocean.dark",
+      "typescript": "base16-ocean.dark",
+      "bash": "base16-ocean.dark",
+      "sh": "base16-ocean.dark"
+    },
+    "label_fg": "#f8f8f2"
+  },
+  "inline": {
+    "code_fg": "#f1fa8c",
+    "code_bg": "#44475a",
+    "link": "#8be9fd",
+    "strikethrough": "#6272a4"
+  },
+  "blocks": {
+    "blockquote": "#bd93f9",
+    "hrule": "#44475a",
+    "table_border": "#6272a4",
+    "table_header": "#f1fa8c",
+    "list_bullet": "#50fa7b",
+    "image_icon": "#ff79c6",
+    "image_alt": "#f8f8f2"
+  }
+}

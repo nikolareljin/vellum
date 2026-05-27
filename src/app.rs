@@ -9,8 +9,8 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Terminal;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
@@ -261,39 +261,38 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
             app.viewport_height = chunks[0].height as usize;
             let content_area = chunks[0];
 
-            // Render visible lines
-            let visible: Vec<&DisplayLine> = app.lines.iter().skip(app.scroll).take(app.viewport_height).collect();
+            // Render visible lines — one widget per line so each text line
+            // occupies exactly 1 terminal row.  The old batched-Paragraph
+            // approach used Wrap which silently consumed extra rows for long
+            // lines (e.g. code-block content), pushing everything below the
+            // viewport and making the bottom of the document invisible.
+            let visible: Vec<&DisplayLine> = app.lines
+                .iter()
+                .skip(app.scroll)
+                .take(app.viewport_height)
+                .collect();
 
             let mut y_offset = 0u16;
-            let mut text_batch: Vec<Line<'static>> = Vec::new();
 
             for dl in visible {
+                if y_offset >= content_area.height {
+                    break;
+                }
                 match dl {
                     DisplayLine::Text(line) => {
-                        text_batch.push(line.clone());
+                        f.render_widget(
+                            Paragraph::new(line.clone())
+                                .block(Block::default().borders(Borders::NONE)),
+                            Rect {
+                                x: content_area.x,
+                                y: content_area.y + y_offset,
+                                width: content_area.width,
+                                height: 1,
+                            },
+                        );
                         y_offset += 1;
                     }
                     DisplayLine::Image { src, height } => {
-                        // Flush accumulated text lines before rendering image
-                        if !text_batch.is_empty() {
-                            let batch_h = text_batch.len() as u16;
-                            let text_y = y_offset.saturating_sub(batch_h);
-                            let rect = Rect {
-                                x: content_area.x,
-                                y: content_area.y + text_y,
-                                width: content_area.width,
-                                height: batch_h.min(content_area.height.saturating_sub(text_y)),
-                            };
-                            if rect.height > 0 {
-                                f.render_widget(
-                                    Paragraph::new(Text::from(text_batch.clone()))
-                                        .block(Block::default().borders(Borders::NONE))
-                                        .wrap(Wrap { trim: false }),
-                                    rect,
-                                );
-                            }
-                            text_batch.clear();
-                        }
                         // Load image state on first encounter
                         if !app.image_states.contains_key(src) {
                             if let Ok(dyn_img) = app.image_cache.get_or_load(src) {
@@ -303,7 +302,6 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                         }
 
                         if app.image_states.contains_key(src) {
-                            // Image loaded — render it at full height
                             let img_rect = Rect {
                                 x: content_area.x,
                                 y: content_area.y + y_offset,
@@ -318,29 +316,9 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                             }
                             y_offset += height;
                         } else {
-                            // Load failed — consume only 1 row so there is no
-                            // large blank hole where the image would have been
                             y_offset += 1;
                         }
                     }
-                }
-            }
-            // flush any trailing text
-            if !text_batch.is_empty() {
-                let start_y = y_offset.saturating_sub(text_batch.len() as u16);
-                let rect = Rect {
-                    x: content_area.x,
-                    y: content_area.y + start_y,
-                    width: content_area.width,
-                    height: (text_batch.len() as u16).min(content_area.height.saturating_sub(start_y)),
-                };
-                if rect.height > 0 {
-                    f.render_widget(
-                        Paragraph::new(Text::from(text_batch.clone()))
-                            .block(Block::default().borders(Borders::NONE))
-                            .wrap(Wrap { trim: false }),
-                        rect,
-                    );
                 }
             }
 

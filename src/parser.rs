@@ -53,6 +53,37 @@ fn is_video_src(src: &str) -> bool {
     )
 }
 
+/// Tight list items (no blank line between siblings) are emitted by
+/// pulldown-cmark WITHOUT Start(Paragraph)/End(Paragraph) wrappers — bare
+/// inline events go directly under Start(Item).  `parse_events` only handles
+/// block-level openers at the top level, so those bare events fall through to
+/// the no-op `_ => {}` arm and produce an empty element list.
+///
+/// This helper detects the "bare inline" case and wraps the events in a
+/// synthetic Paragraph, making them parseable by `parse_events`.
+fn wrap_tight_item(events: Vec<Event>) -> Vec<Event> {
+    let is_bare = match events.first() {
+        Some(
+            Event::Start(Tag::Paragraph)
+            | Event::Start(Tag::CodeBlock(_))
+            | Event::Start(Tag::List(_))
+            | Event::Start(Tag::BlockQuote(_))
+            | Event::Start(Tag::Table(_))
+            | Event::Rule,
+        )
+        | None => false,
+        Some(_) => true,
+    };
+    if is_bare {
+        let mut wrapped = vec![Event::Start(Tag::Paragraph)];
+        wrapped.extend(events);
+        wrapped.push(Event::End(TagEnd::Paragraph));
+        wrapped
+    } else {
+        events
+    }
+}
+
 fn parse_events(events: Vec<Event>) -> Vec<Element> {
     let mut elements = Vec::new();
     let mut i = 0;
@@ -103,7 +134,15 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                                 spans.push(Span::Text(s));
                             }
                         }
-                        Event::Code(c) => spans.push(Span::Code(c.to_string())),
+                        Event::Code(c) => {
+                            if link_href.is_some() {
+                                // e.g. [`PLAN.md`](./PLAN.md) — the backtick text
+                                // is the link label, not a standalone code span
+                                link_text.push_str(c);
+                            } else {
+                                spans.push(Span::Code(c.to_string()));
+                            }
+                        }
                         Event::Start(Tag::Strong) => bold = true,
                         Event::End(TagEnd::Strong) => bold = false,
                         Event::Start(Tag::Emphasis) => italic = true,
@@ -227,7 +266,9 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                             depth -= 1;
                             if depth == 0 {
                                 if !item_events.is_empty() {
-                                    items.push(parse_events(item_events.drain(..).collect()));
+                                    items.push(parse_events(wrap_tight_item(
+                                        item_events.drain(..).collect(),
+                                    )));
                                 }
                                 break;
                             }
@@ -235,7 +276,9 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                         }
                         Event::Start(Tag::Item) => {
                             if depth == 1 && !item_events.is_empty() {
-                                items.push(parse_events(item_events.drain(..).collect()));
+                                items.push(parse_events(wrap_tight_item(
+                                    item_events.drain(..).collect(),
+                                )));
                             } else if depth > 1 {
                                 item_events.push(events[i].clone());
                             }

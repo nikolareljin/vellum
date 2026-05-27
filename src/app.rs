@@ -21,7 +21,7 @@ use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
 use crate::search::{search_lines, SearchResult};
-use crate::video::{extract_thumbnail, is_video_src};
+use crate::video::extract_thumbnail;
 
 /// A rendered line is either a text line or an inline image slot.
 #[derive(Clone)]
@@ -123,24 +123,20 @@ fn build_display_lines(
                 out.push(DisplayLine::Text(Line::from("")));
             }
             Element::Video { src } => {
-                // Try to extract thumbnail; fall back to placeholder text on error
+                // Parser already classified this as video; extract thumbnail.
                 let resolved = resolve_path(src, base_dir);
-                if is_video_src(&resolved) {
-                    match extract_thumbnail(&resolved) {
-                        Ok(tmp) => {
-                            let path = tmp.path().to_string_lossy().to_string();
-                            out.push(DisplayLine::Image { src: path, height: 10 });
-                            out.push(DisplayLine::Text(Line::from("")));
-                            thumb_files.push(tmp);
-                        }
-                        Err(_) => {
-                            let text_lines = render_elements(std::slice::from_ref(el));
-                            for l in text_lines { out.push(DisplayLine::Text(l)); }
-                        }
+                match extract_thumbnail(&resolved) {
+                    Ok(tmp) => {
+                        let path = tmp.path().to_string_lossy().to_string();
+                        out.push(DisplayLine::Image { src: path, height: 10 });
+                        out.push(DisplayLine::Text(Line::from("")));
+                        thumb_files.push(tmp);
                     }
-                } else {
-                    let text_lines = render_elements(std::slice::from_ref(el));
-                    for l in text_lines { out.push(DisplayLine::Text(l)); }
+                    Err(_) => {
+                        // ffmpeg missing or file unreadable — text placeholder
+                        let text_lines = render_elements(std::slice::from_ref(el));
+                        for l in text_lines { out.push(DisplayLine::Text(l)); }
+                    }
                 }
             }
             _ => {
@@ -159,6 +155,20 @@ fn is_local_file_readable(src: &str) -> bool {
         return false;
     }
     std::path::Path::new(src).is_file()
+}
+
+/// Returns `true` when `href` looks like a relative link to a Markdown file
+/// (not an anchor, not an HTTP URL, ends with `.md` or `.markdown`).
+fn is_local_md_link(href: &str) -> bool {
+    if href.starts_with('#')
+        || href.starts_with("http://")
+        || href.starts_with("https://")
+        || href.starts_with("mailto:")
+    {
+        return false;
+    }
+    let lower = href.to_lowercase();
+    lower.ends_with(".md") || lower.ends_with(".markdown")
 }
 
 /// Resolve an image/video `src` relative to the document's `base_dir`.
@@ -428,9 +438,22 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                         if let Some(i) = app.link_cursor {
                             let href = app.doc_links[i].0.clone();
                             if href.starts_with('#') {
+                                // Anchor jump within this document
                                 let slug = &href[1..];
                                 if let Some(&offset) = app.anchor_map.get(slug) {
                                     app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                                }
+                            } else if is_local_md_link(&href) {
+                                // Relative .md file — resolve and open in vellum
+                                let target = resolve_path(&href, file.parent().unwrap_or(Path::new(".")));
+                                let target_path = std::path::PathBuf::from(&target);
+                                if target_path.is_file() {
+                                    disable_raw_mode()?;
+                                    execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+                                    let _ = run(&target_path);
+                                    enable_raw_mode()?;
+                                    execute!(terminal.backend_mut(), EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+                                    terminal.clear()?;
                                 }
                             } else {
                                 let _ = open_url(&href);

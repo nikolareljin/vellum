@@ -45,13 +45,3 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Result<NamedTempFile>
 
     Ok(tmp)
 }
-
-/// Returns true if the src string looks like a video file path.
-pub fn is_video_src(src: &str) -> bool {
-    let lower = src.to_lowercase();
-    lower.ends_with(".mp4")
-        || lower.ends_with(".webm")
-        || lower.ends_with(".mov")
-        || lower.ends_with(".avi")
-        || lower.ends_with(".mkv")
-}

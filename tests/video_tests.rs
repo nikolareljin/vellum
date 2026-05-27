@@ -7,13 +7,3 @@ fn test_extract_thumbnail_missing_file_errors() {
     let msg = format!("{}", result.unwrap_err());
     assert!(msg.contains("not found") || msg.contains("No such"), "got: {msg}");
 }
-
-#[test]
-fn test_is_video_src_recognises_extensions() {
-    use vellum::video::is_video_src;
-    assert!(is_video_src("demo.mp4"));
-    assert!(is_video_src("clip.WEBM"));
-    assert!(is_video_src("file.mov"));
-    assert!(!is_video_src("image.png"));
-    assert!(!is_video_src("doc.md"));
-}

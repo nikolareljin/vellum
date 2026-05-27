@@ -28,6 +28,18 @@ fn test_bold_span() {
 }
 
 #[test]
+fn test_strikethrough_span() {
+    let elements = parse("~~crossed out~~");
+    assert!(
+        matches!(
+            elements.first(),
+            Some(Element::Paragraph(spans)) if spans.iter().any(|s| matches!(s, Span::Strikethrough(_)))
+        ),
+        "expected Strikethrough span in paragraph, got: {elements:?}"
+    );
+}
+
+#[test]
 fn test_code_block_with_lang() {
     let md = "```rust\nfn main() {}\n```";
     let elements = parse(md);
@@ -64,4 +76,36 @@ fn test_link_span() {
     let elements = parse("[visit](https://example.com)");
     let Some(Element::Paragraph(spans)) = elements.first() else { panic!("no paragraph") };
     assert!(spans.iter().any(|s| matches!(s, Span::Link { href, .. } if href == "https://example.com")));
+}
+
+#[test]
+fn test_image_element() {
+    let elements = parse("![alt text](image.png)");
+    assert!(
+        elements.iter().any(|e| matches!(e, Element::Image { alt, src }
+            if alt == "alt text" && src == "image.png")),
+        "expected Element::Image, got: {elements:?}"
+    );
+}
+
+#[test]
+fn test_video_element_classified_by_parser() {
+    // Parser should emit Element::Video (not Element::Image) for video extensions
+    for ext in &["mp4", "webm", "mov", "avi", "mkv"] {
+        let md = format!("![clip](video.{ext})");
+        let elements = parse(&md);
+        assert!(
+            elements.iter().any(|e| matches!(e, Element::Video { .. })),
+            "extension .{ext} should produce Element::Video, got: {elements:?}"
+        );
+    }
+}
+
+#[test]
+fn test_image_not_classified_as_video() {
+    let elements = parse("![photo](photo.png)");
+    assert!(
+        !elements.iter().any(|e| matches!(e, Element::Video { .. })),
+        "png should not produce Element::Video"
+    );
 }

@@ -3,7 +3,6 @@ use ratatui::text::Line;
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub line_index: usize,
-    pub byte_offset: usize,
 }
 
 /// Search rendered lines for `query` (case-insensitive).
@@ -23,8 +22,11 @@ pub fn search_lines(lines: &[Line], query: &str) -> Vec<SearchResult> {
                 .map(|s| s.content.as_ref())
                 .collect::<String>()
                 .to_lowercase();
-            text.find(&q)
-                .map(|offset| SearchResult { line_index: i, byte_offset: offset })
+            if text.contains(q.as_str()) {
+                Some(SearchResult { line_index: i })
+            } else {
+                None
+            }
         })
         .collect()
 }

@@ -125,7 +125,6 @@ fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize
             )]));
         }
 
-        Element::Break => out.push(Line::from("")),
     }
 }
 

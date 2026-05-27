@@ -25,6 +25,7 @@ pub struct Cli {
     /// Show author and project info
     #[arg(long)]
     pub page: bool,
+
 }
 
 fn main() -> anyhow::Result<()> {
@@ -36,6 +37,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let file = cli.file.expect("file required when --page not set");
+
     if cli.code {
         app::open_code_view(&file)?;
     } else {

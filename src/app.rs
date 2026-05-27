@@ -78,8 +78,38 @@ impl App {
         }
     }
 
+    /// Compute the maximum scroll offset in terms of *entries* (not rows),
+    /// accounting for image heights.  Works backwards from the last entry,
+    /// accumulating row heights until the viewport would be full; the entry
+    /// index at that point is the correct start-of-viewport position.
+    ///
+    /// Why this is necessary: a `DisplayLine::Image { height: N }` occupies N
+    /// terminal rows but only 1 slot in `self.lines`.  Using
+    /// `lines.len() - viewport_height` as max_scroll (entry-count arithmetic)
+    /// places an in-viewport image above the fold and displaces text that
+    /// follows it, so only 1 item of a long list at the bottom may be visible.
+    fn max_scroll(&self) -> usize {
+        if self.viewport_height == 0 {
+            return 0;
+        }
+        let mut rows = 0usize;
+        let mut idx = self.lines.len();
+        while idx > 0 {
+            let entry_rows = match &self.lines[idx - 1] {
+                DisplayLine::Image { height, .. } => *height as usize,
+                DisplayLine::Text(_) => 1,
+            };
+            if rows + entry_rows > self.viewport_height {
+                break;
+            }
+            rows += entry_rows;
+            idx -= 1;
+        }
+        idx
+    }
+
     fn scroll_down(&mut self, n: usize) {
-        let max = self.lines.len().saturating_sub(self.viewport_height);
+        let max = self.max_scroll();
         self.scroll = (self.scroll + n).min(max);
     }
 
@@ -91,7 +121,7 @@ impl App {
     fn page_up(&mut self) { self.scroll_up(self.viewport_height.saturating_sub(2)); }
     fn goto_top(&mut self) { self.scroll = 0; }
     fn goto_bottom(&mut self) {
-        self.scroll = self.lines.len().saturating_sub(self.viewport_height);
+        self.scroll = self.max_scroll();
     }
 }
 
@@ -266,15 +296,15 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
             // approach used Wrap which silently consumed extra rows for long
             // lines (e.g. code-block content), pushing everything below the
             // viewport and making the bottom of the document invisible.
-            let visible: Vec<&DisplayLine> = app.lines
-                .iter()
-                .skip(app.scroll)
-                .take(app.viewport_height)
-                .collect();
-
+            //
+            // NOTE: do NOT pre-filter with take(viewport_height): a
+            // DisplayLine::Image { height: N } consumes N rows but only 1
+            // entry slot, so take() would pull too few entries and stop
+            // rendering before the viewport is full.  The y_offset guard
+            // below is the sole stop condition.
             let mut y_offset = 0u16;
 
-            for dl in visible {
+            for dl in app.lines.iter().skip(app.scroll) {
                 if y_offset >= content_area.height {
                     break;
                 }

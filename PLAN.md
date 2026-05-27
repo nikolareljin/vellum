@@ -1,8 +1,8 @@
-# Skopos Implementation Plan
+# Vellum Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `skopos` — a rich Markdown viewer that renders text, images, code blocks, and clickable links directly in the terminal using a full TUI, with an optional code-view mode that opens the raw file in `$EDITOR`.
+**Goal:** Build `vellum` — a rich Markdown viewer that renders text, images, code blocks, and clickable links directly in the terminal using a full TUI, with an optional code-view mode that opens the raw file in `$EDITOR`.
 
 **Architecture:** Parse a Markdown file with `pulldown-cmark` into an internal `Element` enum tree. A renderer maps that tree to `ratatui` widgets drawn each frame. Images are rendered inline via `ratatui-image` (auto-detecting Kitty / Sixel / iTerm2 protocols). Links use OSC 8 escape sequences for external URLs and an anchor map for `#heading` jumps. Video embeds are extracted to a single thumbnail frame via `ffmpeg`.
 
@@ -84,7 +84,7 @@ mod parser;
 mod renderer;
 
 #[derive(Parser, Debug)]
-#[command(name = "skopos", about = "Rich Markdown viewer for the terminal")]
+#[command(name = "vellum", about = "Rich Markdown viewer for the terminal")]
 pub struct Cli {
     /// Markdown file to open
     pub file: std::path::PathBuf,
@@ -143,7 +143,7 @@ echo "// stub" | tee src/highlight.rs src/parser.rs src/renderer.rs
 cargo build 2>&1
 ```
 
-Expected: `Compiling skopos` → no errors (todo! panics are runtime, not compile-time).
+Expected: `Compiling vellum` → no errors (todo! panics are runtime, not compile-time).
 
 - [ ] **Step 5: Commit**
 
@@ -366,7 +366,7 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
 
 ```rust
 // tests/parser_tests.rs
-use skopos::parser::{parse, Element, Span};
+use vellum::parser::{parse, Element, Span};
 
 #[test]
 fn test_heading_level_1() {
@@ -453,7 +453,7 @@ fn test_link_span() {
 - [ ] **Step 3: Expose `parser` module from `lib.rs` so tests can import it**
 
 ```bash
-# Add lib.rs so integration tests can reference skopos::parser
+# Add lib.rs so integration tests can reference vellum::parser
 cat > src/lib.rs << 'RUST'
 pub mod highlight;
 pub mod parser;
@@ -497,7 +497,7 @@ Add to `tests/renderer_tests.rs`:
 
 ```rust
 // tests/renderer_tests.rs
-use skopos::highlight::highlight_code;
+use vellum::highlight::highlight_code;
 
 #[test]
 fn test_highlight_returns_lines() {
@@ -590,10 +590,10 @@ git commit -m "feat: syntect syntax highlighting"
 Append to the file:
 
 ```rust
-use skopos::renderer::render_elements;
+use vellum::renderer::render_elements;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span as RSpan};
-use skopos::parser::{Element, Span};
+use vellum::parser::{Element, Span};
 
 #[test]
 fn test_heading_h1_is_bold_yellow() {
@@ -1019,7 +1019,7 @@ fn which_exists(cmd: &str) -> bool {
 
 ```bash
 cargo build --release 2>&1
-./target/release/skopos README.md
+./target/release/vellum README.md
 ```
 
 Expected: TUI opens, shows README content, `j`/`k` scroll, `q` quits.
@@ -1042,7 +1042,7 @@ git commit -m "feat: TUI event loop with scrolling and status bar"
 - [ ] **Step 1: Create `README.md`**
 
 ```markdown
-# skopos
+# vellum
 
 Rich Markdown viewer for the terminal. Renders headings, paragraphs, code blocks (syntax-highlighted), images, tables, and links in a full TUI.
 
@@ -1061,8 +1061,8 @@ cargo install --path .
 ## Usage
 
 ```bash
-skopos <file.md>          # rich TUI view (default)
-skopos --code <file.md>   # open in $EDITOR / bat / less
+vellum <file.md>          # rich TUI view (default)
+vellum --code <file.md>   # open in $EDITOR / bat / less
 ```
 
 ## Keyboard Shortcuts
@@ -1136,13 +1136,13 @@ git commit -m "docs: README and CHANGELOG for Phase 1"
 
 ```rust
 // tests/image_tests.rs
-use skopos::image::load_image;
+use vellum::image::load_image;
 use std::path::Path;
 
 #[test]
 fn test_load_png_succeeds() {
     // Create a 2x2 white PNG in /tmp for testing
-    let path = "/tmp/skopos_test.png";
+    let path = "/tmp/vellum_test.png";
     image::RgbImage::from_pixel(2, 2, image::Rgb([255u8, 255, 255]))
         .save(path).unwrap();
     let img = load_image(path).unwrap();
@@ -1152,7 +1152,7 @@ fn test_load_png_succeeds() {
 
 #[test]
 fn test_load_missing_file_errors() {
-    let result = load_image("/tmp/skopos_definitely_missing.png");
+    let result = load_image("/tmp/vellum_definitely_missing.png");
     assert!(result.is_err());
 }
 ```
@@ -1238,7 +1238,7 @@ git commit -m "feat: inline image rendering with ratatui-image"
 
 ```rust
 // tests/links_tests.rs
-use skopos::links::{build_anchor_map, anchor_from_heading};
+use vellum::links::{build_anchor_map, anchor_from_heading};
 
 #[test]
 fn test_anchor_from_heading_lowercases_and_hyphens() {
@@ -1252,7 +1252,7 @@ fn test_anchor_strips_special_chars() {
 
 #[test]
 fn test_build_anchor_map_returns_line_offsets() {
-    use skopos::parser::Element;
+    use vellum::parser::Element;
     let elements = vec![
         Element::Heading { level: 1, text: "Introduction".into() },
         Element::Paragraph(vec![]),
@@ -1401,11 +1401,11 @@ git commit -m "feat: link navigation — OSC 8 external, anchor jump internal"
 
 ```rust
 // tests/video_tests.rs
-use skopos::video::extract_thumbnail;
+use vellum::video::extract_thumbnail;
 
 #[test]
 fn test_extract_thumbnail_missing_file_errors() {
-    let result = extract_thumbnail("/tmp/skopos_missing.mp4");
+    let result = extract_thumbnail("/tmp/vellum_missing.mp4");
     assert!(result.is_err());
 }
 
@@ -1413,7 +1413,7 @@ fn test_extract_thumbnail_missing_file_errors() {
 fn test_ffmpeg_unavailable_returns_clear_error() {
     // Force PATH to empty so ffmpeg isn't found
     std::env::set_var("PATH", "");
-    let result = extract_thumbnail("/tmp/skopos_missing.mp4");
+    let result = extract_thumbnail("/tmp/vellum_missing.mp4");
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
     assert!(msg.contains("ffmpeg") || msg.contains("not found") || msg.contains("No such file"),
@@ -1438,7 +1438,7 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Result<NamedTempFile>
     }
 
     let tmp = tempfile::Builder::new()
-        .prefix("skopos_thumb_")
+        .prefix("vellum_thumb_")
         .suffix(".png")
         .tempfile()?;
 
@@ -1528,7 +1528,7 @@ git commit -m "feat: video thumbnail extraction via ffmpeg"
 
 ```rust
 // tests/search_tests.rs
-use skopos::search::{search_lines, SearchResult};
+use vellum::search::{search_lines, SearchResult};
 use ratatui::text::Line;
 
 #[test]
@@ -1655,7 +1655,7 @@ git commit -m "feat: mouse scroll wheel support"
 
 ### Task 12: `--page` About Screen
 
-**Goal:** `skopos --page` prints author/project info (GitHub, LinkedIn) without entering the TUI. Useful as a quick identity card for the binary.
+**Goal:** `vellum --page` prints author/project info (GitHub, LinkedIn) without entering the TUI. Useful as a quick identity card for the binary.
 
 **Files:**
 - Modify: `src/main.rs` — add `--page` flag to `Cli`
@@ -1665,7 +1665,7 @@ git commit -m "feat: mouse scroll wheel support"
 
 ```rust
 #[derive(Parser, Debug)]
-#[command(name = "skopos", about = "Rich Markdown viewer for the terminal")]
+#[command(name = "vellum", about = "Rich Markdown viewer for the terminal")]
 pub struct Cli {
     /// Markdown file to open
     #[arg(required_unless_present = "page")]
@@ -1708,13 +1708,13 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn print_page() {
     println!();
-    println!("  \x1b[1;33mskopos\x1b[0m  v{}  — Rich Markdown viewer for the terminal", VERSION);
+    println!("  \x1b[1;33mvellum\x1b[0m  v{}  — Rich Markdown viewer for the terminal", VERSION);
     println!();
     println!("  \x1b[1mAuthor\x1b[0m   Nik Reljin");
     println!("  \x1b[1mGitHub\x1b[0m   \x1b[4;36mhttps://github.com/nikolareljin\x1b[0m");
     println!("  \x1b[1mLinkedIn\x1b[0m \x1b[4;36mhttps://www.linkedin.com/in/nikolareljin\x1b[0m");
     println!();
-    println!("  Source:  https://github.com/nikolareljin/skopos");
+    println!("  Source:  https://github.com/nikolareljin/vellum");
     println!("  License: MIT");
     println!();
 }
@@ -1726,7 +1726,7 @@ pub fn print_page() {
 
 ```bash
 cargo build --release
-./target/release/skopos --page
+./target/release/vellum --page
 ```
 
 Expected: formatted about block printed, no TUI opened.

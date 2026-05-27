@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SCRIPT: setup.sh
-# DESCRIPTION: Install system dependencies and Rust toolchain components needed for skopos.
+# DESCRIPTION: Install system dependencies and Rust toolchain components needed for vellum.
 # USAGE: ./setup
 # PARAMETERS:
 #  -h           : Show help message and exit.

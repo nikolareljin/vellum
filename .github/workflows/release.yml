@@ -14,5 +14,5 @@ jobs:
   release:
     uses: nikolareljin/ci-helpers/.github/workflows/rust-release.yml@production
     with:
-      bin_name: "skopos"
+      bin_name: "vellum"
       linux_gnu_aliases: "deb,pacman,yum,redhat"

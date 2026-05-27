@@ -17,4 +17,4 @@ source "$ROOT_DIR/scripts/include.sh" "$@"
 
 cd "$ROOT_DIR"
 cargo build --release
-echo "Binary: target/release/skopos"
+echo "Binary: target/release/vellum"

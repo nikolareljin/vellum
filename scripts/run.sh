@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SCRIPT: run.sh
-# DESCRIPTION: Build and run skopos against a local Markdown file.
+# DESCRIPTION: Build and run vellum against a local Markdown file.
 # USAGE: ./run [<file.md>]
 # PARAMETERS:
 #  -h           : Show help message and exit.
@@ -20,4 +20,4 @@ TARGET="${1:-$ROOT_DIR/README.md}"
 
 cd "$ROOT_DIR"
 cargo build --release
-./target/release/skopos "$TARGET"
+./target/release/vellum "$TARGET"

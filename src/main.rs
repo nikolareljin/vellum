@@ -8,6 +8,7 @@ mod links;
 mod parser;
 mod renderer;
 mod search;
+mod svg;
 mod video;
 
 #[derive(Parser, Debug)]

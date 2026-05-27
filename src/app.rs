@@ -96,9 +96,13 @@ impl App {
 }
 
 /// Build DisplayLine list. Returns (lines, thumb_files).
+/// `base_dir` is the directory that contains the Markdown file; image paths
+/// that are relative are resolved against it so that `vellum /any/dir/doc.md`
+/// always finds sibling images regardless of the shell's working directory.
 /// thumb_files must be kept alive by the caller (drop = delete temp files).
 fn build_display_lines(
     elements: &[Element],
+    base_dir: &Path,
 ) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
     let mut out = Vec::new();
     let mut thumb_files = Vec::new();
@@ -106,13 +110,15 @@ fn build_display_lines(
     for el in elements {
         match el {
             Element::Image { src, .. } => {
-                out.push(DisplayLine::Image { src: src.clone(), height: 10 });
+                let resolved = resolve_path(src, base_dir);
+                out.push(DisplayLine::Image { src: resolved, height: 10 });
                 out.push(DisplayLine::Text(Line::from("")));
             }
             Element::Video { src } => {
                 // Try to extract thumbnail; fall back to placeholder text on error
-                if is_video_src(src) {
-                    match extract_thumbnail(src) {
+                let resolved = resolve_path(src, base_dir);
+                if is_video_src(&resolved) {
+                    match extract_thumbnail(&resolved) {
                         Ok(tmp) => {
                             let path = tmp.path().to_string_lossy().to_string();
                             out.push(DisplayLine::Image { src: path, height: 10 });
@@ -138,10 +144,25 @@ fn build_display_lines(
     (out, thumb_files)
 }
 
+/// Resolve an image/video `src` relative to the document's `base_dir`.
+/// Absolute paths and `http(s)://` URLs are returned unchanged.
+fn resolve_path(src: &str, base_dir: &Path) -> String {
+    if src.starts_with("http://") || src.starts_with("https://") {
+        return src.to_owned();
+    }
+    let p = Path::new(src);
+    if p.is_absolute() {
+        src.to_owned()
+    } else {
+        base_dir.join(p).to_string_lossy().into_owned()
+    }
+}
+
 pub fn run(file: &Path) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
-    let (display_lines, thumb_files) = build_display_lines(&elements);
+    let base_dir = file.parent().unwrap_or(Path::new("."));
+    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir);
     let doc_links = collect_links(&elements);
     let anchor_map = build_anchor_map(&elements);
     let fname = file.file_name().unwrap_or_default().to_string_lossy().to_string();

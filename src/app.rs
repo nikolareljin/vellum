@@ -251,18 +251,18 @@ fn follow_link(href: &str, file: &Path) -> Option<std::path::PathBuf> {
 
 /// Return the href of the first link whose rendered line is within ±1 of
 /// `target_line`.  Used to map a mouse-click row to the nearest link.
-fn link_at_line<'a>(
-    doc_links: &'a [(String, usize)],
+fn link_at_line(
+    doc_links: &[(String, usize)],
     target_line: usize,
-) -> Option<&'a str> {
+) -> Option<&str> {
     doc_links
         .iter()
         .min_by_key(|(_, line)| {
-            let diff = if *line >= target_line { *line - target_line } else { target_line - *line };
-            diff
+            
+            (*line).abs_diff(target_line)
         })
         .filter(|(_, line)| {
-            let diff = if *line >= target_line { *line - target_line } else { target_line - *line };
+            let diff = (*line).abs_diff(target_line);
             diff <= 1
         })
         .map(|(href, _)| href.as_str())
@@ -402,7 +402,7 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
 
             // Status bar — shows search prompt when in search mode
             let total = app.lines.len();
-            let pct = if total == 0 { 100 } else { ((app.scroll + app.viewport_height).min(total) * 100) / total };
+            let pct = ((app.scroll + app.viewport_height).min(total) * 100).checked_div(total).unwrap_or(100);
             let status = if app.search_mode {
                 Line::from(vec![
                     Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::Yellow)),
@@ -505,21 +505,19 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                         app.search_query.clear();
                         app.search_results.clear();
                     }
-                    (KeyCode::Char('n'), _) => {
-                        if !app.search_results.is_empty() {
+                    (KeyCode::Char('n'), _)
+                        if !app.search_results.is_empty() => {
                             app.search_cursor = (app.search_cursor + 1) % app.search_results.len();
                             let idx = app.search_results[app.search_cursor].line_index;
                             app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
                         }
-                    }
-                    (KeyCode::Char('N'), _) => {
-                        if !app.search_results.is_empty() {
+                    (KeyCode::Char('N'), _)
+                        if !app.search_results.is_empty() => {
                             let len = app.search_results.len();
                             app.search_cursor = if app.search_cursor == 0 { len - 1 } else { app.search_cursor - 1 };
                             let idx = app.search_results[app.search_cursor].line_index;
                             app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
                         }
-                    }
 
                     // ── Scroll ───────────────────────────────────────────────
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => app.scroll_down(1),
@@ -530,8 +528,8 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                     (KeyCode::Char('G'), _) | (KeyCode::End, _) => app.goto_bottom(),
 
                     // ── Link cycling ─────────────────────────────────────────
-                    (KeyCode::Tab, _) => {
-                        if !app.doc_links.is_empty() {
+                    (KeyCode::Tab, _)
+                        if !app.doc_links.is_empty() => {
                             app.link_cursor = Some(match app.link_cursor {
                                 Some(i) => (i + 1) % app.doc_links.len(),
                                 None => 0,
@@ -539,9 +537,8 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                             let offset = app.doc_links[app.link_cursor.unwrap()].1;
                             app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                         }
-                    }
-                    (KeyCode::BackTab, _) => {
-                        if !app.doc_links.is_empty() {
+                    (KeyCode::BackTab, _)
+                        if !app.doc_links.is_empty() => {
                             let len = app.doc_links.len();
                             app.link_cursor = Some(match app.link_cursor {
                                 Some(0) | None => len - 1,
@@ -550,14 +547,12 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                             let offset = app.doc_links[app.link_cursor.unwrap()].1;
                             app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                         }
-                    }
 
                     // ── Follow link (keyboard) ────────────────────────────────
                     (KeyCode::Enter, _) => {
                         if let Some(i) = app.link_cursor {
                             let href = app.doc_links[i].0.clone();
-                            if href.starts_with('#') {
-                                let slug = &href[1..];
+                            if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
                                     app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                                 }
@@ -588,8 +583,7 @@ pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
                         let clicked_line = app.scroll + mouse.row as usize;
                         if let Some(href) = link_at_line(&app.doc_links, clicked_line) {
                             let href = href.to_owned();
-                            if href.starts_with('#') {
-                                let slug = &href[1..];
+                            if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
                                     app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                                 }

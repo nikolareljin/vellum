@@ -24,7 +24,7 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Result<NamedTempFile>
             "1",
             "-q:v",
             "2",
-            &tmp.path().to_string_lossy().to_string(),
+            tmp.path().to_string_lossy().as_ref(),
         ])
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

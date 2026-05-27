@@ -185,12 +185,11 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                             // renders the image/video; no "[img: alt]" noise.
                         }
                         Event::SoftBreak => spans.push(Span::Text(" ".into())),
-                        Event::HardBreak => {
+                        Event::HardBreak
                             // Flush current spans as a paragraph then start fresh
-                            if !spans.is_empty() {
-                                elements.push(Element::Paragraph(spans.drain(..).collect()));
+                            if !spans.is_empty() => {
+                                elements.push(Element::Paragraph(std::mem::take(&mut spans)));
                             }
-                        }
                         Event::End(TagEnd::Paragraph) => break,
                         _ => {}
                     }
@@ -267,7 +266,7 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                             if depth == 0 {
                                 if !item_events.is_empty() {
                                     items.push(parse_events(wrap_tight_item(
-                                        item_events.drain(..).collect(),
+                                        std::mem::take(&mut item_events),
                                     )));
                                 }
                                 break;
@@ -277,7 +276,7 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                         Event::Start(Tag::Item) => {
                             if depth == 1 && !item_events.is_empty() {
                                 items.push(parse_events(wrap_tight_item(
-                                    item_events.drain(..).collect(),
+                                    std::mem::take(&mut item_events),
                                 )));
                             } else if depth > 1 {
                                 item_events.push(events[i].clone());
@@ -309,11 +308,10 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                         Event::Start(Tag::TableHead) => in_header = true,
                         Event::End(TagEnd::TableHead) => in_header = false,
                         Event::Start(Tag::TableRow) => current_row.clear(),
-                        Event::End(TagEnd::TableRow) => {
-                            if !in_header {
+                        Event::End(TagEnd::TableRow)
+                            if !in_header => {
                                 rows.push(current_row.clone());
                             }
-                        }
                         Event::Start(Tag::TableCell) => cell_text.clear(),
                         Event::End(TagEnd::TableCell) => {
                             if in_header {

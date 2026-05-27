@@ -7,6 +7,7 @@ mod image;
 mod links;
 mod parser;
 mod renderer;
+mod video;
 
 #[derive(Parser, Debug)]
 #[command(name = "vellum", about = "Rich Markdown viewer for the terminal")]

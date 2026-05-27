@@ -111,7 +111,15 @@ fn build_display_lines(
         match el {
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
-                out.push(DisplayLine::Image { src: resolved, height: 10 });
+                // Only create an Image slot when the file is local and exists.
+                // Remote URLs and missing files fall back to the styled text
+                // placeholder so they don't leave an invisible blank gap.
+                if is_local_file_readable(&resolved) {
+                    out.push(DisplayLine::Image { src: resolved, height: 10 });
+                } else {
+                    let text_lines = render_elements(std::slice::from_ref(el));
+                    for l in text_lines { out.push(DisplayLine::Text(l)); }
+                }
                 out.push(DisplayLine::Text(Line::from("")));
             }
             Element::Video { src } => {
@@ -142,6 +150,15 @@ fn build_display_lines(
         }
     }
     (out, thumb_files)
+}
+
+/// Returns `true` when `src` is a local path that exists and is a regular file.
+/// Remote URLs are always `false`; they cannot be rendered inline.
+fn is_local_file_readable(src: &str) -> bool {
+    if src.starts_with("http://") || src.starts_with("https://") {
+        return false;
+    }
+    std::path::Path::new(src).is_file()
 }
 
 /// Resolve an image/video `src` relative to the document's `base_dir`.
@@ -223,26 +240,34 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                             }
                             text_batch.clear();
                         }
-                        let img_rect = Rect {
-                            x: content_area.x,
-                            y: content_area.y + y_offset,
-                            width: content_area.width,
-                            height: (*height).min(content_area.height.saturating_sub(y_offset)),
-                        };
-                        if img_rect.height > 0 {
-                            // Load image state on first encounter
-                            if !app.image_states.contains_key(src) {
-                                if let Ok(dyn_img) = app.image_cache.get_or_load(src) {
-                                    let state = app.picker.new_resize_protocol(dyn_img.clone());
-                                    app.image_states.insert(src.clone(), state);
-                                }
-                            }
-                            if let Some(state) = app.image_states.get_mut(src) {
-                                let widget = StatefulImage::new().resize(Resize::Fit(None));
-                                f.render_stateful_widget(widget, img_rect, state);
+                        // Load image state on first encounter
+                        if !app.image_states.contains_key(src) {
+                            if let Ok(dyn_img) = app.image_cache.get_or_load(src) {
+                                let state = app.picker.new_resize_protocol(dyn_img.clone());
+                                app.image_states.insert(src.clone(), state);
                             }
                         }
-                        y_offset += height;
+
+                        if app.image_states.contains_key(src) {
+                            // Image loaded — render it at full height
+                            let img_rect = Rect {
+                                x: content_area.x,
+                                y: content_area.y + y_offset,
+                                width: content_area.width,
+                                height: (*height).min(content_area.height.saturating_sub(y_offset)),
+                            };
+                            if img_rect.height > 0 {
+                                if let Some(state) = app.image_states.get_mut(src) {
+                                    let widget = StatefulImage::new().resize(Resize::Fit(None));
+                                    f.render_stateful_widget(widget, img_rect, state);
+                                }
+                            }
+                            y_offset += height;
+                        } else {
+                            // Load failed — consume only 1 row so there is no
+                            // large blank hole where the image would have been
+                            y_offset += 1;
+                        }
                     }
                 }
             }

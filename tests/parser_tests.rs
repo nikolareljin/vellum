@@ -167,3 +167,70 @@ fn test_multiline_tight_list_code_links() {
         }
     }
 }
+
+#[test]
+fn test_further_reading_nine_items() {
+    // Full netwise-ai README "Further reading" — 9 items, each a code-label link
+    // with a soft-wrapped continuation line. All 9 must parse with a Link span.
+    let md = concat!(
+        "## Further reading\n\n",
+        "- [`PLAN.md`](./PLAN.md) — full implementation plan, phase breakdown,\n",
+        "  acceptance gates, scope decisions\n",
+        "- [`docs/architecture.md`](./docs/architecture.md) — components, trust\n",
+        "  boundaries, deployment topologies\n",
+        "- [`docs/ai-pipeline.md`](./docs/ai-pipeline.md) — provider abstraction,\n",
+        "  fallback ladder, the 9 AI functions\n",
+        "- [`docs/security-and-safety.md`](./docs/security-and-safety.md) — the\n",
+        "  defensive posture policy\n",
+        "- [`docs/firewall-integrations.md`](./docs/firewall-integrations.md) —\n",
+        "  five firewall providers, the approval workflow\n",
+        "- [`docs/api-examples.md`](./docs/api-examples.md) — curl recipes for\n",
+        "  every endpoint\n",
+        "- [`docs/install-native.md`](./docs/install-native.md) — non-Docker\n",
+        "  install\n",
+        "- [`docs/kafka-design.md`](./docs/kafka-design.md) — where Kafka fits\n",
+        "- [`docs/release-pipeline.md`](./docs/release-pipeline.md) — separate\n",
+        "  `netwise-ai-release` repo for distribution\n",
+    );
+    let elements = parse(md);
+    let list = elements.iter().find(|e| matches!(e, Element::List { .. }));
+    assert!(list.is_some(), "expected a List element");
+    if let Some(Element::List { items, .. }) = list {
+        assert_eq!(items.len(), 9, "expected 9 list items; got {}", items.len());
+        for (idx, item) in items.iter().enumerate() {
+            let has_link = item.iter().any(|el| {
+                if let Element::Paragraph(spans) = el {
+                    spans.iter().any(|s| matches!(s, Span::Link { text, .. } if !text.is_empty()))
+                } else {
+                    false
+                }
+            });
+            assert!(has_link, "item {idx} must have a non-empty Link span; got: {item:?}");
+        }
+    }
+}
+
+#[test]
+fn test_full_readme_further_reading_nine_items() {
+    // Parse the ACTUAL full README — context before Further reading section matters.
+    let md = include_str!("/home/nikos/Projects/netwise-ai/README.md");
+    let elements = parse(md);
+    
+    // Find the Further reading List element by finding the heading index first
+    let fr_pos = elements.iter().position(|e| {
+        matches!(e, Element::Heading { text, .. } if text.contains("Further reading"))
+    });
+    assert!(fr_pos.is_some(), "Could not find 'Further reading' heading in parsed elements");
+    let fr_pos = fr_pos.unwrap();
+    
+    // The list should be the next element after the heading
+    let list = elements.get(fr_pos + 1);
+    assert!(matches!(list, Some(Element::List { .. })), 
+        "Element after 'Further reading' heading should be a List; got: {:?}", list);
+    
+    if let Some(Element::List { items, .. }) = list {
+        assert_eq!(items.len(), 9, 
+            "expected 9 list items in Further reading; got {}. Items:\n{:#?}", 
+            items.len(), items);
+    }
+}

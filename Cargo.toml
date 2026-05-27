@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # TUI framework
-ratatui       = "0.29"
+ratatui       = "0.30"
 crossterm     = "0.28"
 
 # Markdown parsing
@@ -26,7 +26,7 @@ clap = { version = "4", features = ["derive"] }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 
 # Inline image rendering (Kitty / Sixel / iTerm2 auto-detect)
-ratatui-image = "6"
+ratatui-image = { version = "11", default-features = false, features = ["crossterm", "image-defaults"] }
 image         = "0.25"
 
 # SVG rasterisation (pure Rust — no system deps)

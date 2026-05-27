@@ -3,6 +3,7 @@ use clap::Parser;
 mod about;
 mod app;
 mod highlight;
+mod image;
 mod parser;
 mod renderer;
 

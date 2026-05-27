@@ -7,24 +7,47 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::Terminal;
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::{Resize, StatefulImage};
 
-use crate::parser;
+use crate::image::ImageCache;
+use crate::parser::{self, Element};
 use crate::renderer::render_elements;
 
+/// A rendered line is either a text line or an inline image slot.
+#[derive(Clone)]
+pub enum DisplayLine {
+    Text(Line<'static>),
+    /// Image: the src path and desired height in terminal rows.
+    Image { src: String, height: u16 },
+}
+
 struct App {
-    lines: Vec<Line<'static>>,
+    lines: Vec<DisplayLine>,
     scroll: usize,
     viewport_height: usize,
+    /// ratatui-image state per src (loaded on first render)
+    image_states: std::collections::HashMap<String, StatefulProtocol>,
+    picker: Picker,
+    image_cache: ImageCache,
 }
 
 impl App {
-    fn new(lines: Vec<Line<'static>>) -> Self {
-        App { lines, scroll: 0, viewport_height: 0 }
+    fn new(lines: Vec<DisplayLine>, picker: Picker) -> Self {
+        App {
+            lines,
+            scroll: 0,
+            viewport_height: 0,
+            image_states: Default::default(),
+            picker,
+            image_cache: Default::default(),
+        }
     }
 
     fn scroll_down(&mut self, n: usize) {
@@ -36,27 +59,36 @@ impl App {
         self.scroll = self.scroll.saturating_sub(n);
     }
 
-    fn page_down(&mut self) {
-        self.scroll_down(self.viewport_height.saturating_sub(2));
-    }
-
-    fn page_up(&mut self) {
-        self.scroll_up(self.viewport_height.saturating_sub(2));
-    }
-
-    fn goto_top(&mut self) {
-        self.scroll = 0;
-    }
-
+    fn page_down(&mut self) { self.scroll_down(self.viewport_height.saturating_sub(2)); }
+    fn page_up(&mut self) { self.scroll_up(self.viewport_height.saturating_sub(2)); }
+    fn goto_top(&mut self) { self.scroll = 0; }
     fn goto_bottom(&mut self) {
         self.scroll = self.lines.len().saturating_sub(self.viewport_height);
     }
 }
 
+/// Build DisplayLine list from elements — text lines + image slots.
+fn build_display_lines(elements: &[Element]) -> Vec<DisplayLine> {
+    let mut out = Vec::new();
+    for el in elements {
+        if let Element::Image { src, .. } = el {
+            out.push(DisplayLine::Image { src: src.clone(), height: 10 });
+            out.push(DisplayLine::Text(Line::from("")));
+            continue;
+        }
+        // render non-image elements to text lines
+        let text_lines = render_elements(std::slice::from_ref(el));
+        for l in text_lines {
+            out.push(DisplayLine::Text(l));
+        }
+    }
+    out
+}
+
 pub fn run(file: &Path) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
-    let lines = render_elements(&elements);
+    let display_lines = build_display_lines(&elements);
     let fname = file.file_name().unwrap_or_default().to_string_lossy().to_string();
 
     enable_raw_mode()?;
@@ -65,7 +97,11 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(lines);
+    // Auto-detect best image protocol (Kitty → Sixel → iTerm2 → halfblock)
+    let picker = Picker::from_query_stdio()
+        .unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
+
+    let mut app = App::new(display_lines, picker);
 
     loop {
         terminal.draw(|f| {
@@ -76,28 +112,88 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                 .split(area);
 
             app.viewport_height = chunks[0].height as usize;
+            let content_area = chunks[0];
 
-            let visible: Vec<Line<'static>> = app
-                .lines
-                .iter()
-                .skip(app.scroll)
-                .take(app.viewport_height)
-                .cloned()
-                .collect();
+            // Render visible lines
+            let visible: Vec<&DisplayLine> = app.lines.iter().skip(app.scroll).take(app.viewport_height).collect();
 
-            let content = Paragraph::new(Text::from(visible))
-                .block(Block::default().borders(Borders::NONE))
-                .wrap(Wrap { trim: false });
-            f.render_widget(content, chunks[0]);
+            let mut y_offset = 0u16;
+            let mut text_batch: Vec<Line<'static>> = Vec::new();
+
+            for dl in visible {
+                match dl {
+                    DisplayLine::Text(line) => {
+                        text_batch.push(line.clone());
+                        y_offset += 1;
+                    }
+                    DisplayLine::Image { src, height } => {
+                        // Flush accumulated text lines before rendering image
+                        if !text_batch.is_empty() {
+                            let batch_h = text_batch.len() as u16;
+                            let text_y = y_offset.saturating_sub(batch_h);
+                            let rect = Rect {
+                                x: content_area.x,
+                                y: content_area.y + text_y,
+                                width: content_area.width,
+                                height: batch_h.min(content_area.height.saturating_sub(text_y)),
+                            };
+                            if rect.height > 0 {
+                                f.render_widget(
+                                    Paragraph::new(Text::from(text_batch.clone()))
+                                        .block(Block::default().borders(Borders::NONE))
+                                        .wrap(Wrap { trim: false }),
+                                    rect,
+                                );
+                            }
+                            text_batch.clear();
+                        }
+                        let img_rect = Rect {
+                            x: content_area.x,
+                            y: content_area.y + y_offset,
+                            width: content_area.width,
+                            height: (*height).min(content_area.height.saturating_sub(y_offset)),
+                        };
+                        if img_rect.height > 0 {
+                            // Load image state on first encounter
+                            if !app.image_states.contains_key(src) {
+                                if let Ok(dyn_img) = app.image_cache.get_or_load(src) {
+                                    let state = app.picker.new_resize_protocol(dyn_img.clone());
+                                    app.image_states.insert(src.clone(), state);
+                                }
+                            }
+                            if let Some(state) = app.image_states.get_mut(src) {
+                                let widget = StatefulImage::new().resize(Resize::Fit(None));
+                                f.render_stateful_widget(widget, img_rect, state);
+                            }
+                        }
+                        y_offset += height;
+                    }
+                }
+            }
+            // flush any trailing text
+            if !text_batch.is_empty() {
+                let start_y = y_offset.saturating_sub(text_batch.len() as u16);
+                let rect = Rect {
+                    x: content_area.x,
+                    y: content_area.y + start_y,
+                    width: content_area.width,
+                    height: (text_batch.len() as u16).min(content_area.height.saturating_sub(start_y)),
+                };
+                if rect.height > 0 {
+                    f.render_widget(
+                        Paragraph::new(Text::from(text_batch.clone()))
+                            .block(Block::default().borders(Borders::NONE))
+                            .wrap(Wrap { trim: false }),
+                        rect,
+                    );
+                }
+            }
 
             // Status bar
             let total = app.lines.len();
             let pct = if total == 0 { 100 } else { ((app.scroll + app.viewport_height).min(total) * 100) / total };
             let status = Line::from(vec![
-                Span::styled(
-                    format!(" {} ", fname),
-                    Style::default().fg(Color::Black).bg(Color::Cyan),
-                ),
+                Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                 Span::raw(format!(
                     "  line {}/{} ({}%)  │  j/k scroll  g/G top/bot  e code-view  q quit",
                     app.scroll + 1, total, pct,
@@ -105,7 +201,6 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
             ]);
             f.render_widget(Paragraph::new(status), chunks[1]);
 
-            // Scrollbar
             let mut scrollbar_state = ScrollbarState::new(app.lines.len()).position(app.scroll);
             f.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight),
@@ -120,29 +215,16 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                     (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => app.scroll_down(1),
                     (KeyCode::Char('k'), _) | (KeyCode::Up, _) => app.scroll_up(1),
-                    (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                        app.page_down()
-                    }
-                    (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                        app.page_up()
-                    }
+                    (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => app.page_down(),
+                    (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => app.page_up(),
                     (KeyCode::Char('g'), _) | (KeyCode::Home, _) => app.goto_top(),
                     (KeyCode::Char('G'), _) | (KeyCode::End, _) => app.goto_bottom(),
                     (KeyCode::Char('e'), _) => {
-                        // Temporarily leave TUI, open code view, re-enter
                         disable_raw_mode()?;
-                        execute!(
-                            terminal.backend_mut(),
-                            LeaveAlternateScreen,
-                            crossterm::event::DisableMouseCapture
-                        )?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
                         let _ = open_code_view(file);
                         enable_raw_mode()?;
-                        execute!(
-                            terminal.backend_mut(),
-                            EnterAlternateScreen,
-                            crossterm::event::EnableMouseCapture
-                        )?;
+                        execute!(terminal.backend_mut(), EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
                         terminal.clear()?;
                     }
                     _ => {}
@@ -158,11 +240,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
     }
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
     Ok(())
 }
 
@@ -170,15 +248,10 @@ pub fn open_code_view(file: &Path) -> anyhow::Result<()> {
     let editor = std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
         .unwrap_or_else(|_| {
-            if which_exists("bat") {
-                "bat".into()
-            } else if which_exists("less") {
-                "less".into()
-            } else {
-                "cat".into()
-            }
+            if which_exists("bat") { "bat".into() }
+            else if which_exists("less") { "less".into() }
+            else { "cat".into() }
         });
-
     let status = std::process::Command::new(&editor).arg(file).status()?;
     if !status.success() {
         anyhow::bail!("editor '{}' exited with {}", editor, status);
@@ -187,9 +260,6 @@ pub fn open_code_view(file: &Path) -> anyhow::Result<()> {
 }
 
 fn which_exists(cmd: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    std::process::Command::new("which").arg(cmd).output()
+        .map(|o| o.status.success()).unwrap_or(false)
 }

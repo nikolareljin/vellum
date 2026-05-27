@@ -243,7 +243,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
 
     // Auto-detect best image protocol (Kitty → Sixel → iTerm2 → halfblock)
     let picker = Picker::from_query_stdio()
-        .unwrap_or_else(|_| Picker::from_fontsize((8, 12).into()));
+        .unwrap_or_else(|_| Picker::halfblocks());
 
     let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
 

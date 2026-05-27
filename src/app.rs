@@ -260,11 +260,25 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                         app.search_cursor + 1, app.search_results.len(), app.search_query,
                     )),
                 ])
+            } else if let Some(i) = app.link_cursor {
+                // Show focused link's href — VSCode-like bottom bar hint
+                let href = &app.doc_links[i].0;
+                Line::from(vec![
+                    Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                    Span::styled(
+                        format!("  → {}  ", href),
+                        Style::default().fg(Color::Rgb(80, 190, 255)),
+                    ),
+                    Span::styled(
+                        "│ Enter follow  Tab next  Shift+Tab prev  Esc deselect",
+                        Style::default().fg(Color::Rgb(120, 120, 120)),
+                    ),
+                ])
             } else {
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                     Span::raw(format!(
-                        "  {}/{} ({}%)  │  j/k  g/G  Tab  /search  e code  q quit",
+                        "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  / search  e code  q quit",
                         app.scroll + 1, total, pct,
                     )),
                 ])
@@ -310,6 +324,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                     (KeyCode::Esc, _) => {
                         app.search_results.clear();
                         app.search_cursor = 0;
+                        app.link_cursor = None; // deselect focused link
                     }
                     // Search activation and navigation (normal mode)
                     (KeyCode::Char('/'), _) => {

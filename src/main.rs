@@ -41,7 +41,30 @@ fn main() -> anyhow::Result<()> {
     if cli.code {
         app::open_code_view(&file)?;
     } else {
-        app::run(&file)?;
+        let mut history = app::NavHistory::new();
+        let mut current = file.clone();
+
+        loop {
+            match app::run(&current, &history)? {
+                app::NavAction::Quit => break,
+                app::NavAction::GoTo(next) => {
+                    history.push_back(current.clone());
+                    current = next;
+                }
+                app::NavAction::Back => {
+                    if let Some(prev) = history.go_back(current.clone()) {
+                        current = prev;
+                    }
+                    // Empty back stack → stay on current file (no-op)
+                }
+                app::NavAction::Forward => {
+                    if let Some(next) = history.go_forward(current.clone()) {
+                        current = next;
+                    }
+                    // Empty forward stack → stay on current file (no-op)
+                }
+            }
+        }
     }
 
     Ok(())

@@ -1,5 +1,5 @@
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::execute;
@@ -22,6 +22,55 @@ use crate::parser::{self, Element};
 use crate::renderer::render_elements;
 use crate::search::{search_lines, SearchResult};
 use crate::video::extract_thumbnail;
+
+// ── Navigation history ────────────────────────────────────────────────────────
+
+/// What `run()` wants the caller to do next.
+pub enum NavAction {
+    Quit,
+    GoTo(PathBuf),
+    Back,
+    Forward,
+}
+
+/// Browser-like navigation history capped at 20 entries each direction.
+pub struct NavHistory {
+    pub back:    std::collections::VecDeque<PathBuf>,
+    pub forward: std::collections::VecDeque<PathBuf>,
+}
+
+impl NavHistory {
+    const MAX: usize = 20;
+
+    pub fn new() -> Self {
+        Self { back: Default::default(), forward: Default::default() }
+    }
+
+    /// Navigate to a new file: push `current` onto back stack, clear forward.
+    pub fn push_back(&mut self, current: PathBuf) {
+        if self.back.len() == Self::MAX { self.back.pop_front(); }
+        self.back.push_back(current);
+        self.forward.clear();
+    }
+
+    /// Go back: pop from back, push `current` onto forward.
+    /// Returns `None` when already at the oldest entry.
+    pub fn go_back(&mut self, current: PathBuf) -> Option<PathBuf> {
+        let prev = self.back.pop_back()?;
+        if self.forward.len() == Self::MAX { self.forward.pop_front(); }
+        self.forward.push_back(current);
+        Some(prev)
+    }
+
+    /// Go forward: pop from forward, push `current` onto back.
+    /// Returns `None` when there is no forward history.
+    pub fn go_forward(&mut self, current: PathBuf) -> Option<PathBuf> {
+        let next = self.forward.pop_back()?;
+        if self.back.len() == Self::MAX { self.back.pop_front(); }
+        self.back.push_back(current);
+        Some(next)
+    }
+}
 
 /// A rendered line is either a text line or an inline image slot.
 #[derive(Clone)]
@@ -256,7 +305,7 @@ fn resolve_path(src: &str, base_dir: &Path) -> String {
     }
 }
 
-pub fn run(file: &Path) -> anyhow::Result<()> {
+pub fn run(file: &Path, history: &NavHistory) -> anyhow::Result<NavAction> {
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
     let base_dir = file.parent().unwrap_or(Path::new("."));
@@ -277,10 +326,9 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
 
     let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
 
-    // Labeled loop: break with Some(path) to navigate to another file,
-    // break with None to quit.  Terminal is cleaned up AFTER the loop so
-    // any navigation call gets a fresh terminal context.
-    let navigate_to: Option<std::path::PathBuf> = 'main: loop {
+    // Labeled loop: break with NavAction to signal what to do next.
+    // Terminal is cleaned up AFTER the loop.
+    let action: NavAction = 'main: loop {
         terminal.draw(|f| {
             let area = f.area();
             let chunks = Layout::default()
@@ -385,10 +433,20 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
             } else {
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
-                    Span::raw(format!(
-                        "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  / search  e code  q quit",
-                        app.scroll + 1, total, pct,
-                    )),
+                    {
+                        let back_n  = history.back.len();
+                        let fwd_n   = history.forward.len();
+                        let nav_hint = match (back_n, fwd_n) {
+                            (0, 0) => String::new(),
+                            (b, 0) => format!("  ← [{}]", b),
+                            (0, f) => format!("  → [{}]", f),
+                            (b, f) => format!("  ← [{}]  → [{}]", b, f),
+                        };
+                        Span::raw(format!(
+                            "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  / search  e code  q quit{}",
+                            app.scroll + 1, total, pct, nav_hint,
+                        ))
+                    },
                 ])
             };
             f.render_widget(Paragraph::new(status), chunks[1]);
@@ -405,8 +463,12 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
             match event::read()? {
                 Event::Key(KeyEvent { code, modifiers, .. }) => match (code, modifiers) {
                     (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        break 'main None;
+                        break 'main NavAction::Quit;
                     }
+
+                    // ── History navigation ───────────────────────────────────
+                    (KeyCode::Left, KeyModifiers::ALT) => break 'main NavAction::Back,
+                    (KeyCode::Right, KeyModifiers::ALT) => break 'main NavAction::Forward,
 
                     // ── Search mode input ────────────────────────────────────
                     (KeyCode::Char(ch), _) if app.search_mode => {
@@ -500,7 +562,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                                     app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                                 }
                             } else if let Some(path) = follow_link(&href, file) {
-                                break 'main Some(path);
+                                break 'main NavAction::GoTo(path);
                             }
                         }
                     }
@@ -532,7 +594,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                                     app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                                 }
                             } else if let Some(path) = follow_link(&href, file) {
-                                break 'main Some(path);
+                                break 'main NavAction::GoTo(path);
                             }
                         }
                     }
@@ -546,12 +608,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
 
-    // Navigate to a new file after clean terminal teardown
-    if let Some(next_path) = navigate_to {
-        run(&next_path)?;
-    }
-
-    Ok(())
+    Ok(action)
 }
 
 pub fn open_code_view(file: &Path) -> anyhow::Result<()> {

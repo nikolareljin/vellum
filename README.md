@@ -38,6 +38,29 @@ vellum README.md
 
 ## Install
 
+### Script (quickest — installs to `~/.local/bin`)
+
+```bash
+git clone https://github.com/nikolareljin/vellum
+cd vellum
+./setup          # install ffmpeg + rustfmt/clippy (one-time)
+./install        # builds release binary + copies to ~/.local/bin
+
+# Upgrade
+./install        # re-run any time to build + overwrite
+
+# Uninstall
+./install --uninstall
+
+# Custom prefix (e.g. /usr/local)
+./install --prefix /usr/local   # may need sudo for /usr/local/bin
+```
+
+> `~/.local/bin` must be in your `PATH`. If not, add to `~/.bashrc` / `~/.zshrc`:
+> ```bash
+> export PATH="$HOME/.local/bin:$PATH"
+> ```
+
 ### Homebrew (macOS / Linux)
 
 ```bash

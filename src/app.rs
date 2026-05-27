@@ -17,6 +17,7 @@ use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
 use crate::image::ImageCache;
+use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
 
@@ -36,10 +37,19 @@ struct App {
     image_states: std::collections::HashMap<String, StatefulProtocol>,
     picker: Picker,
     image_cache: ImageCache,
+    /// (href, rendered-line-offset)
+    doc_links: Vec<(String, usize)>,
+    link_cursor: Option<usize>,
+    anchor_map: std::collections::HashMap<String, usize>,
 }
 
 impl App {
-    fn new(lines: Vec<DisplayLine>, picker: Picker) -> Self {
+    fn new(
+        lines: Vec<DisplayLine>,
+        picker: Picker,
+        doc_links: Vec<(String, usize)>,
+        anchor_map: std::collections::HashMap<String, usize>,
+    ) -> Self {
         App {
             lines,
             scroll: 0,
@@ -47,6 +57,9 @@ impl App {
             image_states: Default::default(),
             picker,
             image_cache: Default::default(),
+            doc_links,
+            link_cursor: None,
+            anchor_map,
         }
     }
 
@@ -89,6 +102,8 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
     let display_lines = build_display_lines(&elements);
+    let doc_links = collect_links(&elements);
+    let anchor_map = build_anchor_map(&elements);
     let fname = file.file_name().unwrap_or_default().to_string_lossy().to_string();
 
     enable_raw_mode()?;
@@ -101,7 +116,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
     let picker = Picker::from_query_stdio()
         .unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
 
-    let mut app = App::new(display_lines, picker);
+    let mut app = App::new(display_lines, picker, doc_links, anchor_map);
 
     loop {
         terminal.draw(|f| {
@@ -195,7 +210,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
             let status = Line::from(vec![
                 Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                 Span::raw(format!(
-                    "  line {}/{} ({}%)  │  j/k scroll  g/G top/bot  e code-view  q quit",
+                    "  line {}/{} ({}%)  │  j/k  g/G  Tab links  Enter follow  e code  q quit",
                     app.scroll + 1, total, pct,
                 )),
             ]);
@@ -219,6 +234,44 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                     (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => app.page_up(),
                     (KeyCode::Char('g'), _) | (KeyCode::Home, _) => app.goto_top(),
                     (KeyCode::Char('G'), _) | (KeyCode::End, _) => app.goto_bottom(),
+                    (KeyCode::Tab, _) => {
+                        if app.doc_links.is_empty() { /* nothing */ }
+                        else if let Some(i) = app.link_cursor {
+                            app.link_cursor = Some((i + 1) % app.doc_links.len());
+                        } else {
+                            app.link_cursor = Some(0);
+                        }
+                        if let Some(i) = app.link_cursor {
+                            let offset = app.doc_links[i].1;
+                            app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                        }
+                    }
+                    (KeyCode::BackTab, _) => {
+                        if !app.doc_links.is_empty() {
+                            let len = app.doc_links.len();
+                            app.link_cursor = Some(match app.link_cursor {
+                                Some(0) | None => len - 1,
+                                Some(i) => i - 1,
+                            });
+                            if let Some(i) = app.link_cursor {
+                                let offset = app.doc_links[i].1;
+                                app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                            }
+                        }
+                    }
+                    (KeyCode::Enter, _) => {
+                        if let Some(i) = app.link_cursor {
+                            let href = app.doc_links[i].0.clone();
+                            if href.starts_with('#') {
+                                let slug = &href[1..];
+                                if let Some(&offset) = app.anchor_map.get(slug) {
+                                    app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                                }
+                            } else {
+                                let _ = open_url(&href);
+                            }
+                        }
+                    }
                     (KeyCode::Char('e'), _) => {
                         disable_raw_mode()?;
                         execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;

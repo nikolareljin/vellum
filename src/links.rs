@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::Element;
+use crate::parser::{Element, Span};
 
 /// Convert a heading string to a GitHub-style anchor slug.
 pub fn anchor_from_heading(text: &str) -> String {
@@ -18,25 +18,38 @@ pub fn anchor_from_heading(text: &str) -> String {
 pub fn build_anchor_map(elements: &[Element]) -> HashMap<String, usize> {
     let mut map = HashMap::new();
     let mut line = 0usize;
+    count_anchor_lines(elements, &mut map, &mut line);
+    map
+}
+
+fn count_anchor_lines(
+    elements: &[Element],
+    map: &mut HashMap<String, usize>,
+    line: &mut usize,
+) {
     for el in elements {
         match el {
             Element::Heading { text, .. } => {
-                map.insert(anchor_from_heading(text), line);
-                line += 2;
+                map.insert(anchor_from_heading(text), *line);
+                *line += 2;
             }
             Element::Paragraph(_) | Element::CodeBlock { .. } | Element::HRule | Element::Image { .. } => {
-                line += 2;
+                *line += 2;
             }
             Element::Table { rows, .. } => {
-                line += rows.len() + 3;
+                *line += rows.len() + 3;
             }
             Element::List { items, .. } => {
-                line += items.len() + 1;
+                for item in items {
+                    count_anchor_lines(item, map, line);
+                }
             }
-            _ => line += 1,
+            Element::BlockQuote(inner) => {
+                count_anchor_lines(inner, map, line);
+            }
+            _ => *line += 1,
         }
     }
-    map
 }
 
 /// Open a URL in the system browser.
@@ -49,16 +62,13 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     {
         anyhow::bail!("refusing to open non-http(s) url: {}", url);
     }
-    // Belt-and-suspenders: reject anything starting with '-'
     if url.starts_with('-') {
         anyhow::bail!("refusing url starting with '-'");
     }
 
     let status = if cfg!(target_os = "linux") {
-        // Pass `--` so xdg-open cannot interpret the URL as a flag
         std::process::Command::new("xdg-open").arg("--").arg(url).status()?
     } else if cfg!(target_os = "macos") {
-        // `open` does not honor `--`, but scheme allowlist above is sufficient
         std::process::Command::new("open").arg(url).status()?
     } else {
         anyhow::bail!("unsupported platform for open_url")
@@ -69,26 +79,47 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Collect all link hrefs and their approximate rendered-line offsets from elements.
+/// Collect all link hrefs with their approximate rendered-line offsets.
+/// Recurses into list items and blockquotes.
 pub fn collect_links(elements: &[Element]) -> Vec<(String, usize)> {
     let mut links = Vec::new();
     let mut line = 0usize;
+    collect_links_inner(elements, &mut links, &mut line);
+    links
+}
+
+fn collect_links_inner(
+    elements: &[Element],
+    links: &mut Vec<(String, usize)>,
+    line: &mut usize,
+) {
     for el in elements {
         match el {
             Element::Paragraph(spans) => {
-                for span in spans {
-                    if let crate::parser::Span::Link { href, .. } = span {
-                        links.push((href.clone(), line));
-                    }
-                }
-                line += 2;
+                collect_span_links(spans, links, *line);
+                *line += 2;
             }
-            Element::Heading { .. } => line += 2,
-            Element::CodeBlock { .. } | Element::HRule | Element::Image { .. } => line += 2,
-            Element::Table { rows, .. } => line += rows.len() + 3,
-            Element::List { items, .. } => line += items.len() + 1,
-            _ => line += 1,
+            Element::Heading { .. } => *line += 2,
+            Element::CodeBlock { .. } | Element::HRule | Element::Image { .. } | Element::Video { .. } => {
+                *line += 2;
+            }
+            Element::Table { rows, .. } => *line += rows.len() + 3,
+            Element::List { items, .. } => {
+                for item in items {
+                    collect_links_inner(item, links, line);
+                }
+            }
+            Element::BlockQuote(inner) => {
+                collect_links_inner(inner, links, line);
+            }
         }
     }
-    links
+}
+
+fn collect_span_links(spans: &[Span], links: &mut Vec<(String, usize)>, line: usize) {
+    for span in spans {
+        if let Span::Link { href, .. } = span {
+            links.push((href.clone(), line));
+        }
+    }
 }

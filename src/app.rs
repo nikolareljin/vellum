@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -148,6 +148,47 @@ fn build_display_lines(
     (out, thumb_files)
 }
 
+/// Resolve and follow `href` from the context of `file`:
+/// - `#anchor` → returns `None` (handled by caller as in-page scroll)
+/// - `./other.md` / `other.md` → returns `Some(resolved_path)`
+/// - `https://...` → opens in system browser, returns `None`
+fn follow_link(href: &str, file: &Path) -> Option<std::path::PathBuf> {
+    if href.starts_with('#') {
+        // Anchor jumps are handled separately by the caller
+        return None;
+    }
+    if is_local_md_link(href) {
+        let base = file.parent().unwrap_or(Path::new("."));
+        let resolved = resolve_path(href, base);
+        let path = std::path::PathBuf::from(&resolved);
+        if path.is_file() {
+            return Some(path);
+        }
+    } else {
+        let _ = open_url(href);
+    }
+    None
+}
+
+/// Return the href of the first link whose rendered line is within ±1 of
+/// `target_line`.  Used to map a mouse-click row to the nearest link.
+fn link_at_line<'a>(
+    doc_links: &'a [(String, usize)],
+    target_line: usize,
+) -> Option<&'a str> {
+    doc_links
+        .iter()
+        .min_by_key(|(_, line)| {
+            let diff = if *line >= target_line { *line - target_line } else { target_line - *line };
+            diff
+        })
+        .filter(|(_, line)| {
+            let diff = if *line >= target_line { *line - target_line } else { target_line - *line };
+            diff <= 1
+        })
+        .map(|(href, _)| href.as_str())
+}
+
 /// Returns `true` when `src` is a local path that exists and is a regular file.
 /// Remote URLs are always `false`; they cannot be rendered inline.
 fn is_local_file_readable(src: &str) -> bool {
@@ -206,7 +247,10 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
 
     let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
 
-    loop {
+    // Labeled loop: break with Some(path) to navigate to another file,
+    // break with None to quit.  Terminal is cleaned up AFTER the loop so
+    // any navigation call gets a fresh terminal context.
+    let navigate_to: Option<std::path::PathBuf> = 'main: loop {
         terminal.draw(|f| {
             let area = f.area();
             let chunks = Layout::default()
@@ -352,8 +396,11 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(KeyEvent { code, modifiers, .. }) => match (code, modifiers) {
-                    (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
-                    // Search mode input
+                    (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        break 'main None;
+                    }
+
+                    // ── Search mode input ────────────────────────────────────
                     (KeyCode::Char(ch), _) if app.search_mode => {
                         app.search_query.push(ch);
                     }
@@ -362,10 +409,9 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                     }
                     (KeyCode::Enter, _) if app.search_mode => {
                         app.search_mode = false;
-                        // Run search against text lines only
-                        let text_lines: Vec<ratatui::text::Line> = app.lines.iter().filter_map(|dl| {
-                            if let DisplayLine::Text(l) = dl { Some(l.clone()) } else { None }
-                        }).collect();
+                        let text_lines: Vec<ratatui::text::Line> = app.lines.iter()
+                            .filter_map(|dl| if let DisplayLine::Text(l) = dl { Some(l.clone()) } else { None })
+                            .collect();
                         app.search_results = search_lines(&text_lines, &app.search_query);
                         app.search_cursor = 0;
                         if let Some(r) = app.search_results.first() {
@@ -380,9 +426,10 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                     (KeyCode::Esc, _) => {
                         app.search_results.clear();
                         app.search_cursor = 0;
-                        app.link_cursor = None; // deselect focused link
+                        app.link_cursor = None;
                     }
-                    // Search activation and navigation (normal mode)
+
+                    // ── Search navigation ────────────────────────────────────
                     (KeyCode::Char('/'), _) => {
                         app.search_mode = true;
                         app.search_query.clear();
@@ -403,21 +450,23 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                             app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
                         }
                     }
+
+                    // ── Scroll ───────────────────────────────────────────────
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => app.scroll_down(1),
                     (KeyCode::Char('k'), _) | (KeyCode::Up, _) => app.scroll_up(1),
                     (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => app.page_down(),
                     (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => app.page_up(),
                     (KeyCode::Char('g'), _) | (KeyCode::Home, _) => app.goto_top(),
                     (KeyCode::Char('G'), _) | (KeyCode::End, _) => app.goto_bottom(),
+
+                    // ── Link cycling ─────────────────────────────────────────
                     (KeyCode::Tab, _) => {
-                        if app.doc_links.is_empty() { /* nothing */ }
-                        else if let Some(i) = app.link_cursor {
-                            app.link_cursor = Some((i + 1) % app.doc_links.len());
-                        } else {
-                            app.link_cursor = Some(0);
-                        }
-                        if let Some(i) = app.link_cursor {
-                            let offset = app.doc_links[i].1;
+                        if !app.doc_links.is_empty() {
+                            app.link_cursor = Some(match app.link_cursor {
+                                Some(i) => (i + 1) % app.doc_links.len(),
+                                None => 0,
+                            });
+                            let offset = app.doc_links[app.link_cursor.unwrap()].1;
                             app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                         }
                     }
@@ -428,38 +477,27 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                                 Some(0) | None => len - 1,
                                 Some(i) => i - 1,
                             });
-                            if let Some(i) = app.link_cursor {
-                                let offset = app.doc_links[i].1;
-                                app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
-                            }
+                            let offset = app.doc_links[app.link_cursor.unwrap()].1;
+                            app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                         }
                     }
+
+                    // ── Follow link (keyboard) ────────────────────────────────
                     (KeyCode::Enter, _) => {
                         if let Some(i) = app.link_cursor {
                             let href = app.doc_links[i].0.clone();
                             if href.starts_with('#') {
-                                // Anchor jump within this document
                                 let slug = &href[1..];
                                 if let Some(&offset) = app.anchor_map.get(slug) {
                                     app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
                                 }
-                            } else if is_local_md_link(&href) {
-                                // Relative .md file — resolve and open in vellum
-                                let target = resolve_path(&href, file.parent().unwrap_or(Path::new(".")));
-                                let target_path = std::path::PathBuf::from(&target);
-                                if target_path.is_file() {
-                                    disable_raw_mode()?;
-                                    execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
-                                    let _ = run(&target_path);
-                                    enable_raw_mode()?;
-                                    execute!(terminal.backend_mut(), EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
-                                    terminal.clear()?;
-                                }
-                            } else {
-                                let _ = open_url(&href);
+                            } else if let Some(path) = follow_link(&href, file) {
+                                break 'main Some(path);
                             }
                         }
                     }
+
+                    // ── Code view ────────────────────────────────────────────
                     (KeyCode::Char('e'), _) => {
                         disable_raw_mode()?;
                         execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
@@ -470,18 +508,41 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
                     }
                     _ => {}
                 },
+
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollDown => app.scroll_down(3),
                     MouseEventKind::ScrollUp => app.scroll_up(3),
+
+                    // ── Left click: follow link under cursor ──────────────────
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        let clicked_line = app.scroll + mouse.row as usize;
+                        if let Some(href) = link_at_line(&app.doc_links, clicked_line) {
+                            let href = href.to_owned();
+                            if href.starts_with('#') {
+                                let slug = &href[1..];
+                                if let Some(&offset) = app.anchor_map.get(slug) {
+                                    app.scroll = offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                                }
+                            } else if let Some(path) = follow_link(&href, file) {
+                                break 'main Some(path);
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}
             }
         }
-    }
+    }; // end 'main loop
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+
+    // Navigate to a new file after clean terminal teardown
+    if let Some(next_path) = navigate_to {
+        run(&next_path)?;
+    }
+
     Ok(())
 }
 

@@ -41,9 +41,24 @@ pub fn build_anchor_map(elements: &[Element]) -> HashMap<String, usize> {
 
 /// Open a URL in the system browser.
 pub fn open_url(url: &str) -> anyhow::Result<()> {
+    // Allowlist schemes to prevent argument injection via flag-looking URLs
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:"))
+    {
+        anyhow::bail!("refusing to open non-http(s) url: {}", url);
+    }
+    // Belt-and-suspenders: reject anything starting with '-'
+    if url.starts_with('-') {
+        anyhow::bail!("refusing url starting with '-'");
+    }
+
     let status = if cfg!(target_os = "linux") {
-        std::process::Command::new("xdg-open").arg(url).status()?
+        // Pass `--` so xdg-open cannot interpret the URL as a flag
+        std::process::Command::new("xdg-open").arg("--").arg(url).status()?
     } else if cfg!(target_os = "macos") {
+        // `open` does not honor `--`, but scheme allowlist above is sufficient
         std::process::Command::new("open").arg(url).status()?
     } else {
         anyhow::bail!("unsupported platform for open_url")

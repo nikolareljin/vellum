@@ -20,6 +20,7 @@ use crate::image::ImageCache;
 use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
+use crate::video::{extract_thumbnail, is_video_src};
 
 /// A rendered line is either a text line or an inline image slot.
 #[derive(Clone)]
@@ -41,6 +42,8 @@ struct App {
     doc_links: Vec<(String, usize)>,
     link_cursor: Option<usize>,
     anchor_map: std::collections::HashMap<String, usize>,
+    /// Keep temp files alive for the session (drop = delete)
+    _thumb_files: Vec<tempfile::NamedTempFile>,
 }
 
 impl App {
@@ -49,6 +52,7 @@ impl App {
         picker: Picker,
         doc_links: Vec<(String, usize)>,
         anchor_map: std::collections::HashMap<String, usize>,
+        thumb_files: Vec<tempfile::NamedTempFile>,
     ) -> Self {
         App {
             lines,
@@ -60,6 +64,7 @@ impl App {
             doc_links,
             link_cursor: None,
             anchor_map,
+            _thumb_files: thumb_files,
         }
     }
 
@@ -80,28 +85,53 @@ impl App {
     }
 }
 
-/// Build DisplayLine list from elements — text lines + image slots.
-fn build_display_lines(elements: &[Element]) -> Vec<DisplayLine> {
+/// Build DisplayLine list. Returns (lines, thumb_files).
+/// thumb_files must be kept alive by the caller (drop = delete temp files).
+fn build_display_lines(
+    elements: &[Element],
+) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
     let mut out = Vec::new();
+    let mut thumb_files = Vec::new();
+
     for el in elements {
-        if let Element::Image { src, .. } = el {
-            out.push(DisplayLine::Image { src: src.clone(), height: 10 });
-            out.push(DisplayLine::Text(Line::from("")));
-            continue;
-        }
-        // render non-image elements to text lines
-        let text_lines = render_elements(std::slice::from_ref(el));
-        for l in text_lines {
-            out.push(DisplayLine::Text(l));
+        match el {
+            Element::Image { src, .. } => {
+                out.push(DisplayLine::Image { src: src.clone(), height: 10 });
+                out.push(DisplayLine::Text(Line::from("")));
+            }
+            Element::Video { src } => {
+                // Try to extract thumbnail; fall back to placeholder text on error
+                if is_video_src(src) {
+                    match extract_thumbnail(src) {
+                        Ok(tmp) => {
+                            let path = tmp.path().to_string_lossy().to_string();
+                            out.push(DisplayLine::Image { src: path, height: 10 });
+                            out.push(DisplayLine::Text(Line::from("")));
+                            thumb_files.push(tmp);
+                        }
+                        Err(_) => {
+                            let text_lines = render_elements(std::slice::from_ref(el));
+                            for l in text_lines { out.push(DisplayLine::Text(l)); }
+                        }
+                    }
+                } else {
+                    let text_lines = render_elements(std::slice::from_ref(el));
+                    for l in text_lines { out.push(DisplayLine::Text(l)); }
+                }
+            }
+            _ => {
+                let text_lines = render_elements(std::slice::from_ref(el));
+                for l in text_lines { out.push(DisplayLine::Text(l)); }
+            }
         }
     }
-    out
+    (out, thumb_files)
 }
 
 pub fn run(file: &Path) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
-    let display_lines = build_display_lines(&elements);
+    let (display_lines, thumb_files) = build_display_lines(&elements);
     let doc_links = collect_links(&elements);
     let anchor_map = build_anchor_map(&elements);
     let fname = file.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -116,7 +146,7 @@ pub fn run(file: &Path) -> anyhow::Result<()> {
     let picker = Picker::from_query_stdio()
         .unwrap_or_else(|_| Picker::from_fontsize((8, 12)));
 
-    let mut app = App::new(display_lines, picker, doc_links, anchor_map);
+    let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
 
     loop {
         terminal.draw(|f| {

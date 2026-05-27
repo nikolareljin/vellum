@@ -1,5 +1,9 @@
 # vellum
 
+<p align="center">
+  <img src="assets/img/logo.png" alt="vellum logo" width="128"/>
+</p>
+
 [![Rust](https://github.com/nikolareljin/vellum/actions/workflows/rust.yml/badge.svg)](https://github.com/nikolareljin/vellum/actions/workflows/rust.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

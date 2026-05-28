@@ -19,7 +19,7 @@ pub struct Cli {
     #[arg(required_unless_present = "page")]
     pub file: Option<std::path::PathBuf>,
 
-    /// Colour theme: dark (default), dracula, solarized, or a name from ~/.config/vellum/themes/
+    /// Colour theme: dark (default), dracula, solarized, or a name from $XDG_CONFIG_HOME/vellum/themes/ (defaults to ~/.config/vellum/themes/)
     #[arg(short = 't', long, value_name = "NAME")]
     pub theme: Option<String>,
 

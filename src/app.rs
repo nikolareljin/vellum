@@ -463,11 +463,11 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                     Span::styled(
                         format!("  → {}  ", href),
-                        Style::default().fg(Color::Rgb(80, 190, 255)),
+                        Style::default().fg(theme.inline.link.to_color()),
                     ),
                     Span::styled(
                         "│ Enter follow  Tab next  Shift+Tab prev  Esc deselect",
-                        Style::default().fg(Color::Rgb(120, 120, 120)),
+                        Style::default().fg(theme.inline.strikethrough.to_color()),
                     ),
                 ])
             } else {
@@ -535,9 +535,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         app.search_results = search_lines(&text_lines, &app.search_query);
                         app.search_cursor = 0;
                         if let Some(r) = app.search_results.first() {
-                            app.scroll = r
-                                .line_index
-                                .min(app.lines.len().saturating_sub(app.viewport_height));
+                            app.scroll = r.line_index.min(app.max_scroll());
                         }
                     }
                     (KeyCode::Esc, _) if app.search_mode => {
@@ -560,7 +558,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     (KeyCode::Char('n'), _) if !app.search_results.is_empty() => {
                         app.search_cursor = (app.search_cursor + 1) % app.search_results.len();
                         let idx = app.search_results[app.search_cursor].line_index;
-                        app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
+                        app.scroll = idx.min(app.max_scroll());
                     }
                     (KeyCode::Char('N'), _) if !app.search_results.is_empty() => {
                         let len = app.search_results.len();
@@ -570,7 +568,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             app.search_cursor - 1
                         };
                         let idx = app.search_results[app.search_cursor].line_index;
-                        app.scroll = idx.min(app.lines.len().saturating_sub(app.viewport_height));
+                        app.scroll = idx.min(app.max_scroll());
                     }
 
                     // ── Scroll ───────────────────────────────────────────────
@@ -592,8 +590,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             None => 0,
                         });
                         let offset = app.doc_links[app.link_cursor.unwrap()].1;
-                        app.scroll =
-                            offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                        app.scroll = offset.min(app.max_scroll());
                     }
                     (KeyCode::BackTab, _) if !app.doc_links.is_empty() => {
                         let len = app.doc_links.len();
@@ -602,8 +599,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             Some(i) => i - 1,
                         });
                         let offset = app.doc_links[app.link_cursor.unwrap()].1;
-                        app.scroll =
-                            offset.min(app.lines.len().saturating_sub(app.viewport_height));
+                        app.scroll = offset.min(app.max_scroll());
                     }
 
                     // ── Follow link (keyboard) ────────────────────────────────
@@ -612,8 +608,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             let href = app.doc_links[i].0.clone();
                             if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
-                                    app.scroll = offset
-                                        .min(app.lines.len().saturating_sub(app.viewport_height));
+                                    app.scroll = offset.min(app.max_scroll());
                                 }
                             } else if let Some(path) = follow_link(&href, file) {
                                 break 'main NavAction::GoTo(path);
@@ -673,8 +668,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             let href = href.to_owned();
                             if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
-                                    app.scroll = offset
-                                        .min(app.lines.len().saturating_sub(app.viewport_height));
+                                    app.scroll = offset.min(app.max_scroll());
                                 }
                             } else if let Some(path) = follow_link(&href, file) {
                                 break 'main NavAction::GoTo(path);

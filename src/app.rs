@@ -283,6 +283,22 @@ fn follow_link(href: &str, file: &Path) -> Option<std::path::PathBuf> {
     None
 }
 
+/// Convert a terminal viewport row into the absolute entry index in `lines`,
+/// accounting for image entries that occupy multiple terminal rows.
+fn viewport_row_to_entry(lines: &[DisplayLine], scroll: usize, row: usize) -> usize {
+    let mut rows = 0usize;
+    for (i, dl) in lines.iter().enumerate().skip(scroll) {
+        if rows >= row {
+            return i;
+        }
+        rows += match dl {
+            DisplayLine::Image { height, .. } => *height as usize,
+            DisplayLine::Text(_) => 1,
+        };
+    }
+    lines.len().saturating_sub(1)
+}
+
 /// Return the href of the first link whose rendered line is within ±1 of
 /// `target_line`.  Used to map a mouse-click row to the nearest link.
 fn link_at_line(doc_links: &[(String, usize)], target_line: usize) -> Option<&str> {
@@ -663,7 +679,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
 
                     // ── Left click: follow link under cursor ──────────────────
                     MouseEventKind::Down(MouseButton::Left) => {
-                        let clicked_line = app.scroll + mouse.row as usize;
+                        let clicked_line =
+                            viewport_row_to_entry(&app.lines, app.scroll, mouse.row as usize);
                         if let Some(href) = link_at_line(&app.doc_links, clicked_line) {
                             let href = href.to_owned();
                             if let Some(slug) = href.strip_prefix('#') {

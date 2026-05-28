@@ -114,6 +114,9 @@ struct App {
     search_query: String,
     search_results: Vec<SearchResult>,
     search_cursor: usize,
+    /// Maps each SearchResult.line_index (into text-only lines) back to the
+    /// corresponding index in `self.lines` (which includes image entries).
+    search_line_map: Vec<usize>,
 }
 
 impl App {
@@ -139,6 +142,7 @@ impl App {
             search_query: String::new(),
             search_results: Vec::new(),
             search_cursor: 0,
+            search_line_map: Vec::new(),
         }
     }
 
@@ -537,21 +541,27 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     }
                     (KeyCode::Enter, _) if app.search_mode => {
                         app.search_mode = false;
-                        let text_lines: Vec<ratatui::text::Line> = app
-                            .lines
-                            .iter()
-                            .filter_map(|dl| {
-                                if let DisplayLine::Text(l) = dl {
-                                    Some(l.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
+                        // Build text_lines and a parallel map back to app.lines indices
+                        // so search result offsets (into text-only lines) can be translated
+                        // to the correct scroll position in the full DisplayLine list.
+                        let mut text_lines = Vec::new();
+                        let mut search_line_map = Vec::new();
+                        for (i, dl) in app.lines.iter().enumerate() {
+                            if let DisplayLine::Text(l) = dl {
+                                text_lines.push(l.clone());
+                                search_line_map.push(i);
+                            }
+                        }
                         app.search_results = search_lines(&text_lines, &app.search_query);
+                        app.search_line_map = search_line_map;
                         app.search_cursor = 0;
                         if let Some(r) = app.search_results.first() {
-                            app.scroll = r.line_index.min(app.max_scroll());
+                            let mapped = app
+                                .search_line_map
+                                .get(r.line_index)
+                                .copied()
+                                .unwrap_or(r.line_index);
+                            app.scroll = mapped.min(app.max_scroll());
                         }
                     }
                     (KeyCode::Esc, _) if app.search_mode => {
@@ -573,7 +583,12 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     }
                     (KeyCode::Char('n'), _) if !app.search_results.is_empty() => {
                         app.search_cursor = (app.search_cursor + 1) % app.search_results.len();
-                        let idx = app.search_results[app.search_cursor].line_index;
+                        let text_idx = app.search_results[app.search_cursor].line_index;
+                        let idx = app
+                            .search_line_map
+                            .get(text_idx)
+                            .copied()
+                            .unwrap_or(text_idx);
                         app.scroll = idx.min(app.max_scroll());
                     }
                     (KeyCode::Char('N'), _) if !app.search_results.is_empty() => {
@@ -583,7 +598,12 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         } else {
                             app.search_cursor - 1
                         };
-                        let idx = app.search_results[app.search_cursor].line_index;
+                        let text_idx = app.search_results[app.search_cursor].line_index;
+                        let idx = app
+                            .search_line_map
+                            .get(text_idx)
+                            .copied()
+                            .unwrap_or(text_idx);
                         app.scroll = idx.min(app.max_scroll());
                     }
 

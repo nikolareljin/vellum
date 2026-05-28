@@ -1,0 +1,221 @@
+name: Release tarballs
+
+on:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "[0-9]*.[0-9]*.[0-9]*-rc*"
+      - "[0-9]*.[0-9]*.[0-9]*-RC*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-tarballs:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos-arm64
+          - os: macos-14
+            platform: macos-x86_64
+            rust_target: x86_64-apple-darwin
+            macos_deployment_target: "10.13"
+          - os: ubuntu-latest
+            platform: linux-x86_64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-05-22
+
+      - name: Build release binary
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.rust_target }}"
+          if [ -n "$target" ]; then
+            deployment_target="${{ matrix.macos_deployment_target }}"
+            if [ -n "$deployment_target" ]; then
+              export MACOSX_DEPLOYMENT_TARGET="$deployment_target"
+            fi
+            rustup target add "$target"
+            cargo build --release --target "$target"
+            bin_path="target/$target/release/vellum"
+          else
+            cargo build --release
+            bin_path="target/release/vellum"
+          fi
+          if [ ! -f "$bin_path" ]; then
+            echo "::error::Built binary not found at $bin_path"
+            exit 1
+          fi
+          echo "bin_path=$bin_path" >> "$GITHUB_OUTPUT"
+
+      - name: Package tarball
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          tarball="vellum-${tag}-${{ matrix.platform }}.tar.gz"
+          bin_path="${{ steps.build.outputs.bin_path }}"
+          bin_dir="$(dirname "$bin_path")"
+          tar -czf "$tarball" -C "$bin_dir" vellum
+          if command -v shasum >/dev/null 2>&1; then
+            sha256="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+          else
+            sha256="$(sha256sum "$tarball" | awk '{print $1}')"
+          fi
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ steps.package.outputs.tarball }}
+          update_existing: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write sha metadata
+        env:
+          SHA256: ${{ steps.package.outputs.sha256 }}
+          TARBALL: ${{ steps.package.outputs.tarball }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          printf "%s  %s\n" "$SHA256" "$TARBALL" > "sha256-${PLATFORM}.txt"
+
+      - name: Upload sha artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256-${{ matrix.platform }}
+          path: sha256-${{ matrix.platform }}.txt
+
+  bump-homebrew:
+    name: Bump Homebrew formula
+    needs: build-tarballs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          errors=()
+          if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN:-}" ]; then
+            errors+=("HOMEBREW_TAP_GITHUB_TOKEN secret is not set")
+          fi
+          if [ -z "${HOMEBREW_TAP_REPO:-}" ]; then
+            errors+=("HOMEBREW_TAP_REPO secret is not set")
+          fi
+          if [ ${#errors[@]} -gt 0 ]; then
+            for error in "${errors[@]}"; do
+              echo "::error::$error"
+            done
+            exit 1
+          fi
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_REPO: ${{ secrets.HOMEBREW_TAP_REPO }}
+
+      - name: Download sha artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sha256-*
+          merge-multiple: true
+
+      - name: Checkout tap repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${HOMEBREW_TAP_GITHUB_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" tap
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_REPO: ${{ secrets.HOMEBREW_TAP_REPO }}
+
+      - name: Update formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ "$tag" == v* ]]; then
+            version="${tag#v}"
+          else
+            version="$tag"
+          fi
+
+          sha_macos_arm64="$(awk '{print $1}' sha256-macos-arm64.txt)"
+          sha_macos_x86_64="$(awk '{print $1}' sha256-macos-x86_64.txt)"
+          sha_linux_x86_64="$(awk '{print $1}' sha256-linux-x86_64.txt)"
+
+          VERSION="$version" \
+          SHA_MACOS_ARM64="$sha_macos_arm64" \
+          SHA_MACOS_X86_64="$sha_macos_x86_64" \
+          SHA_LINUX_X86_64="$sha_linux_x86_64" \
+          python3 - <<'PY'
+          import re, os
+          from pathlib import Path
+
+          formula_path = Path("tap/Formula/vellum.rb")
+          content = formula_path.read_text()
+
+          version       = os.environ["VERSION"]
+          sha_arm64     = os.environ["SHA_MACOS_ARM64"]
+          sha_x86_64    = os.environ["SHA_MACOS_X86_64"]
+          sha_linux     = os.environ["SHA_LINUX_X86_64"]
+
+          for sha, name in [(sha_arm64, "arm64"), (sha_x86_64, "x86_64"), (sha_linux, "linux")]:
+              if not re.match(r'^[0-9a-f]{64}$', sha):
+                  raise SystemExit(f"Invalid SHA256 for {name}: {sha}")
+
+          content, n = re.subn(r'version ".*?"', f'version "{version}"', content, count=1)
+          if n != 1:
+              raise SystemExit("Expected exactly one version line.")
+
+          def replace_sha(content, platform, sha):
+              lines = content.splitlines()
+              for i, line in enumerate(lines):
+                  if re.search(rf'url ".*{re.escape(platform)}.*"', line):
+                      for j in range(i + 1, len(lines)):
+                          if "url " in lines[j]:
+                              break
+                          if lines[j].lstrip().startswith("sha256"):
+                              lines[j], n = re.subn(r'[0-9a-f]{64}', sha, lines[j], count=1)
+                              if n != 1:
+                                  raise SystemExit(f"Expected one sha256 match for {platform}")
+                              return "\n".join(lines) + "\n"
+              raise SystemExit(f"sha256 line not found for platform: {platform}")
+
+          content = replace_sha(content, "macos-arm64",  sha_arm64)
+          content = replace_sha(content, "macos-x86_64", sha_x86_64)
+          content = replace_sha(content, "linux-x86_64", sha_linux)
+
+          formula_path.write_text(content)
+          print("Formula updated.")
+          PY
+
+      - name: Validate formula syntax
+        run: ruby -c tap/Formula/vellum.rb
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet Formula/vellum.rb; then
+            git add Formula/vellum.rb
+            git commit -m "Update vellum to ${GITHUB_REF_NAME}"
+            max_retries=3
+            for i in $(seq 1 $max_retries); do
+              git push && break
+              [ "$i" -lt "$max_retries" ] && git pull --rebase && sleep 2
+            done
+          fi

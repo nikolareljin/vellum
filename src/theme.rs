@@ -259,10 +259,21 @@ mod tests {
 
     #[test]
     fn unknown_theme_errors() {
-        // Test the built-in lookup directly — no filesystem I/O, no $HOME dependency.
+        // Exercise Theme::load with an isolated config dir so neither user files
+        // nor built-ins match — verifies the public not-found error path.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let prev = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        let result = Theme::load(Some("nonexistent-theme-xyz"));
+        match prev {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        let err = result.expect_err("unknown theme must return an error");
+        let msg = err.to_string();
         assert!(
-            builtin("nonexistent").is_none(),
-            "nonexistent should not be a built-in"
+            msg.contains("nonexistent-theme-xyz"),
+            "error message should name the missing theme, got: {msg}"
         );
     }
 

@@ -241,21 +241,24 @@ mod tests {
 
     #[test]
     fn dracula_theme_loads() {
-        let t = Theme::load(Some("dracula")).expect("dracula theme should load");
+        // Parse the embedded JSON directly — avoids user $XDG_CONFIG_HOME lookup.
+        let t: Theme = parse_json(DRACULA_JSON, "dracula").expect("dracula theme should parse");
         let Rgb(r, g, b) = t.headings.h1;
         assert_eq!((r, g, b), (255, 121, 198), "Dracula H1 = #ff79c6");
     }
 
     #[test]
     fn solarized_theme_loads() {
-        let t = Theme::load(Some("solarized")).expect("solarized theme should load");
+        let t: Theme =
+            parse_json(SOLARIZED_JSON, "solarized").expect("solarized theme should parse");
         let Rgb(r, g, b) = t.headings.h1;
         assert_eq!((r, g, b), (181, 137, 0), "Solarized H1 = #b58900");
     }
 
     #[test]
     fn unknown_theme_errors() {
-        assert!(Theme::load(Some("nonexistent")).is_err());
+        // Test the built-in lookup directly — no filesystem I/O, no $HOME dependency.
+        assert!(builtin("nonexistent").is_none(), "nonexistent should not be a built-in");
     }
 
     #[test]

@@ -2965,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "vellum"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2976,6 +2976,8 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "resvg",
+ "serde",
+ "serde_json",
  "syntect",
  "tempfile",
  "thiserror 2.0.18",

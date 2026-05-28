@@ -11,9 +11,9 @@ class Vellum < Formula
   desc "Rich Markdown viewer for the terminal"
   homepage "https://github.com/nikolareljin/vellum"
   # url and sha256 are filled in by gen_brew_formula.sh at release time
-  url "https://github.com/nikolareljin/vellum/archive/refs/tags/0.5.0.tar.gz"
+  url "https://github.com/nikolareljin/vellum/archive/refs/tags/0.6.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256_UPDATED_BY_CI"
-  version "0.5.0"
+  version "0.6.0"
   license "MIT"
 
   depends_on "rust" => :build

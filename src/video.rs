@@ -31,9 +31,7 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Result<NamedTempFile>
         .status()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::anyhow!(
-                    "ffmpeg not found — install ffmpeg to enable video thumbnails"
-                )
+                anyhow::anyhow!("ffmpeg not found — install ffmpeg to enable video thumbnails")
             } else {
                 anyhow::anyhow!("ffmpeg failed: {}", e)
             }

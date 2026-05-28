@@ -22,18 +22,18 @@ pub fn build_anchor_map(elements: &[Element]) -> HashMap<String, usize> {
     map
 }
 
-fn count_anchor_lines(
-    elements: &[Element],
-    map: &mut HashMap<String, usize>,
-    line: &mut usize,
-) {
+fn count_anchor_lines(elements: &[Element], map: &mut HashMap<String, usize>, line: &mut usize) {
     for el in elements {
         match el {
             Element::Heading { text, .. } => {
                 map.insert(anchor_from_heading(text), *line);
                 *line += 2;
             }
-            Element::Paragraph(_) | Element::CodeBlock { .. } | Element::HRule | Element::Image { .. } => {
+            Element::Paragraph(_)
+            | Element::CodeBlock { .. }
+            | Element::HRule
+            | Element::Image { .. }
+            | Element::Video { .. } => {
                 *line += 2;
             }
             Element::Table { rows, .. } => {
@@ -47,7 +47,6 @@ fn count_anchor_lines(
             Element::BlockQuote(inner) => {
                 count_anchor_lines(inner, map, line);
             }
-            _ => *line += 1,
         }
     }
 }
@@ -67,7 +66,10 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     }
 
     let status = if cfg!(target_os = "linux") {
-        std::process::Command::new("xdg-open").arg("--").arg(url).status()?
+        std::process::Command::new("xdg-open")
+            .arg("--")
+            .arg(url)
+            .status()?
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(url).status()?
     } else {
@@ -88,11 +90,7 @@ pub fn collect_links(elements: &[Element]) -> Vec<(String, usize)> {
     links
 }
 
-fn collect_links_inner(
-    elements: &[Element],
-    links: &mut Vec<(String, usize)>,
-    line: &mut usize,
-) {
+fn collect_links_inner(elements: &[Element], links: &mut Vec<(String, usize)>, line: &mut usize) {
     for el in elements {
         match el {
             Element::Paragraph(spans) => {
@@ -100,7 +98,10 @@ fn collect_links_inner(
                 *line += 2;
             }
             Element::Heading { .. } => *line += 2,
-            Element::CodeBlock { .. } | Element::HRule | Element::Image { .. } | Element::Video { .. } => {
+            Element::CodeBlock { .. }
+            | Element::HRule
+            | Element::Image { .. }
+            | Element::Video { .. } => {
                 *line += 2;
             }
             Element::Table { rows, .. } => *line += rows.len() + 3,

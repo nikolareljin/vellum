@@ -6,4 +6,5 @@ pub mod parser;
 pub mod renderer;
 pub mod search;
 pub mod svg;
+pub mod theme;
 pub mod video;

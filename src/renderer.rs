@@ -3,35 +3,23 @@ use ratatui::text::{Line, Span as RSpan};
 
 use crate::highlight::highlight_code;
 use crate::parser::{Element, Span};
-
-// Heading colours: H1 → H6
-const HEADING_COLORS: [Color; 6] = [
-    Color::Rgb(255, 215, 0),   // H1 — gold
-    Color::Rgb(100, 200, 255), // H2 — sky blue
-    Color::Rgb(100, 220, 120), // H3 — seafoam
-    Color::Rgb(220, 130, 255), // H4 — lilac
-    Color::Rgb(100, 180, 255), // H5 — steel blue
-    Color::Rgb(180, 180, 180), // H6 — silver
-];
-
-// Dark background used inside code blocks (close to VSCode's dark theme)
-const CODE_BG: Color = Color::Rgb(30, 30, 36);
-// Slightly lighter for the language label bar
-const CODE_HEADER_BG: Color = Color::Rgb(45, 45, 55);
+use crate::theme::{BlockColors, CodeColors, HeadingColors, InlineColors, Theme};
 
 /// Convert a list of `Element`s into a flat list of ratatui `Line`s ready for display.
-pub fn render_elements(elements: &[Element]) -> Vec<Line<'static>> {
+pub fn render_elements(elements: &[Element], theme: &Theme) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     for element in elements {
-        render_element(element, &mut lines, 0);
+        render_element(element, &mut lines, 0, theme);
         lines.push(Line::from(""));
     }
     lines
 }
 
-fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize) {
+fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize, theme: &Theme) {
     match element {
-        Element::Heading { level, text } => render_heading(*level, text, out),
+        Element::Heading { level, text } => {
+            render_heading(*level, text, &theme.headings, theme.blocks.hrule, out)
+        }
 
         Element::Paragraph(spans) => {
             let prefix = " ".repeat(indent);
@@ -40,30 +28,31 @@ fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize
                 rspans.push(RSpan::raw(prefix));
             }
             for span in spans {
-                rspans.extend(render_span(span));
+                rspans.extend(render_span(span, &theme.inline));
             }
             out.push(Line::from(rspans));
         }
 
-        Element::CodeBlock { lang, code } => render_code_block(lang.as_deref(), code, out),
+        Element::CodeBlock { lang, code } => {
+            render_code_block(lang.as_deref(), code, &theme.code, theme.blocks.hrule, out);
+        }
 
         Element::HRule => {
             out.push(Line::from(vec![RSpan::styled(
                 "─".repeat(72),
-                Style::default().fg(Color::Rgb(80, 80, 80)),
+                Style::default().fg(theme.blocks.hrule.to_color()),
             )]));
         }
 
         Element::BlockQuote(inner) => {
             let bar_style = Style::default()
-                .fg(Color::Rgb(100, 180, 255))
+                .fg(theme.blocks.blockquote.to_color())
                 .add_modifier(Modifier::BOLD);
             let mut inner_lines: Vec<Line<'static>> = Vec::new();
             for el in inner {
-                render_element(el, &mut inner_lines, indent + 2);
+                render_element(el, &mut inner_lines, indent + 2, theme);
             }
             for mut line in inner_lines {
-                // Apply italic to all existing spans to give blockquote flavour
                 for span in &mut line.spans {
                     span.style = span
                         .style
@@ -75,6 +64,7 @@ fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize
         }
 
         Element::List { ordered, items } => {
+            let bullet_color = theme.blocks.list_bullet.to_color();
             for (idx, item_elements) in items.iter().enumerate() {
                 let bullet = if *ordered {
                     format!("  {}. ", idx + 1)
@@ -82,13 +72,13 @@ fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize
                     "  • ".to_string()
                 };
                 let bullet_style = Style::default()
-                    .fg(Color::Rgb(100, 200, 255))
+                    .fg(bullet_color)
                     .add_modifier(Modifier::BOLD);
                 let bullet_span = RSpan::styled(bullet, bullet_style);
 
                 let mut item_lines: Vec<Line<'static>> = Vec::new();
                 for el in item_elements {
-                    render_element(el, &mut item_lines, indent + 4);
+                    render_element(el, &mut item_lines, indent + 4, theme);
                 }
                 if let Some(first) = item_lines.first_mut() {
                     first.spans.insert(0, bullet_span);
@@ -100,19 +90,18 @@ fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize
             }
         }
 
-        Element::Table { headers, rows } => render_table(headers, rows, out),
+        Element::Table { headers, rows } => render_table(headers, rows, &theme.blocks, out),
 
         Element::Image { alt, .. } => {
-            // Phase 1 placeholder — Phase 2 replaces with ratatui-image widget.
             out.push(Line::from(vec![
                 RSpan::styled(
                     " 🖼  ",
-                    Style::default().fg(Color::Rgb(200, 120, 255)),
+                    Style::default().fg(theme.blocks.image_icon.to_color()),
                 ),
                 RSpan::styled(
                     alt.clone(),
                     Style::default()
-                        .fg(Color::Rgb(160, 160, 160))
+                        .fg(theme.blocks.image_alt.to_color())
                         .add_modifier(Modifier::ITALIC),
                 ),
             ]));
@@ -121,22 +110,33 @@ fn render_element(element: &Element, out: &mut Vec<Line<'static>>, indent: usize
         Element::Video { .. } => {
             out.push(Line::from(vec![RSpan::styled(
                 " ▶  video thumbnail",
-                Style::default().fg(Color::Rgb(100, 180, 255)),
+                Style::default().fg(theme.blocks.blockquote.to_color()),
             )]));
         }
-
     }
 }
 
 // ─── Headings ────────────────────────────────────────────────────────────────
 
-fn render_heading(level: u8, text: &str, out: &mut Vec<Line<'static>>) {
-    let color = HEADING_COLORS[(level as usize).saturating_sub(1).min(5)];
+fn render_heading(
+    level: u8,
+    text: &str,
+    hc: &HeadingColors,
+    marker_color: crate::theme::Rgb,
+    out: &mut Vec<Line<'static>>,
+) {
+    let color = match level {
+        1 => hc.h1.to_color(),
+        2 => hc.h2.to_color(),
+        3 => hc.h3.to_color(),
+        4 => hc.h4.to_color(),
+        5 => hc.h5.to_color(),
+        _ => hc.h6.to_color(),
+    };
     let char_count = text.chars().count();
 
     match level {
         1 => {
-            // H1: full bold+underlined title, gold rule beneath
             let style = Style::default()
                 .fg(color)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
@@ -150,7 +150,6 @@ fn render_heading(level: u8, text: &str, out: &mut Vec<Line<'static>>) {
             )]));
         }
         2 => {
-            // H2: bold title, thin rule beneath, indented
             let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
             out.push(Line::from(vec![
                 RSpan::styled("  ", Style::default()),
@@ -158,14 +157,10 @@ fn render_heading(level: u8, text: &str, out: &mut Vec<Line<'static>>) {
             ]));
             out.push(Line::from(vec![
                 RSpan::styled("  ", Style::default()),
-                RSpan::styled(
-                    "─".repeat(char_count.min(68)),
-                    Style::default().fg(color),
-                ),
+                RSpan::styled("─".repeat(char_count.min(68)), Style::default().fg(color)),
             ]));
         }
         3 => {
-            // H3: coloured marker bar + bold title
             out.push(Line::from(vec![
                 RSpan::styled(
                     "    ▌ ",
@@ -178,15 +173,10 @@ fn render_heading(level: u8, text: &str, out: &mut Vec<Line<'static>>) {
             ]));
         }
         level => {
-            // H4–H6: progressive indent, bold, dimmer
             let indent = " ".repeat((level as usize) * 2);
-            let marker = "● ";
             out.push(Line::from(vec![
                 RSpan::raw(indent),
-                RSpan::styled(
-                    marker,
-                    Style::default().fg(Color::Rgb(100, 100, 100)),
-                ),
+                RSpan::styled("● ", Style::default().fg(marker_color.to_color())),
                 RSpan::styled(
                     text.to_string(),
                     Style::default().fg(color).add_modifier(Modifier::BOLD),
@@ -198,54 +188,66 @@ fn render_heading(level: u8, text: &str, out: &mut Vec<Line<'static>>) {
 
 // ─── Code blocks ─────────────────────────────────────────────────────────────
 
-fn render_code_block(lang: Option<&str>, code: &str, out: &mut Vec<Line<'static>>) {
+fn render_code_block(
+    lang: Option<&str>,
+    code: &str,
+    cc: &CodeColors,
+    border_color: crate::theme::Rgb,
+    out: &mut Vec<Line<'static>>,
+) {
     let label = lang.unwrap_or("text").to_uppercase();
+    let header_bg = cc.header_bg.to_color();
+    let code_bg = cc.bg.to_color();
+
     let label_style = Style::default()
-        .fg(Color::Rgb(200, 200, 200))
-        .bg(CODE_HEADER_BG)
+        .fg(cc.label_fg.to_color())
+        .bg(header_bg)
         .add_modifier(Modifier::BOLD);
 
-    // Top bar: language label
+    // Language label bar
     out.push(Line::from(vec![
         RSpan::styled(format!("  {} ", label), label_style),
-        // Pad the rest of the bar (approximate; terminal will clip)
         RSpan::styled(
             " ".repeat(64_usize.saturating_sub(label.len() + 3)),
-            Style::default().bg(CODE_HEADER_BG),
+            Style::default().bg(header_bg),
         ),
     ]));
 
-    // Syntax-highlighted lines, each with code background
-    let styled_lines = highlight_code(code, lang);
+    // Syntax-highlighted body
+    let styled_lines = highlight_code(code, lang, cc);
     for sl in styled_lines {
-        let mut rspans: Vec<RSpan<'static>> = vec![
-            RSpan::styled("  ", Style::default().bg(CODE_BG)), // left gutter
-        ];
+        let mut rspans: Vec<RSpan<'static>> =
+            vec![RSpan::styled("  ", Style::default().bg(code_bg))];
         rspans.extend(sl.into_iter().map(|(s, text)| {
             RSpan::styled(
                 text,
-                Style::default()
-                    .fg(syntect_color(s.foreground))
-                    .bg(CODE_BG),
+                Style::default().fg(syntect_color(s.foreground)).bg(code_bg),
             )
         }));
-        rspans.push(RSpan::styled(" ", Style::default().bg(CODE_BG))); // right pad
+        rspans.push(RSpan::styled(" ", Style::default().bg(code_bg)));
         out.push(Line::from(rspans));
     }
 
-    // Bottom border
     out.push(Line::from(vec![RSpan::styled(
         "─".repeat(66),
-        Style::default().fg(Color::Rgb(60, 60, 70)),
+        Style::default().fg(border_color.to_color()),
     )]));
 }
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
-fn render_table(headers: &[String], rows: &[Vec<String>], out: &mut Vec<Line<'static>>) {
+fn render_table(
+    headers: &[String],
+    rows: &[Vec<String>],
+    bc: &BlockColors,
+    out: &mut Vec<Line<'static>>,
+) {
     if headers.is_empty() {
         return;
     }
+    let border_color = bc.table_border.to_color();
+    let header_color = bc.table_header.to_color();
+
     let col_widths: Vec<usize> = headers
         .iter()
         .enumerate()
@@ -276,7 +278,7 @@ fn render_table(headers: &[String], rows: &[Vec<String>], out: &mut Vec<Line<'st
         .collect();
     out.push(Line::from(vec![RSpan::styled(
         top,
-        Style::default().fg(Color::Rgb(80, 80, 100)),
+        Style::default().fg(border_color),
     )]));
 
     // Header row
@@ -288,13 +290,13 @@ fn render_table(headers: &[String], rows: &[Vec<String>], out: &mut Vec<Line<'st
             RSpan::styled(
                 cell,
                 Style::default()
-                    .fg(Color::Rgb(255, 215, 0))
+                    .fg(header_color)
                     .add_modifier(Modifier::BOLD),
             )
         })
         .chain(std::iter::once(RSpan::styled(
             "│",
-            Style::default().fg(Color::Rgb(80, 80, 100)),
+            Style::default().fg(border_color),
         )))
         .collect();
     out.push(Line::from(header_spans));
@@ -316,7 +318,7 @@ fn render_table(headers: &[String], rows: &[Vec<String>], out: &mut Vec<Line<'st
         .collect();
     out.push(Line::from(vec![RSpan::styled(
         sep,
-        Style::default().fg(Color::Rgb(80, 80, 100)),
+        Style::default().fg(border_color),
     )]));
 
     // Data rows
@@ -350,13 +352,13 @@ fn render_table(headers: &[String], rows: &[Vec<String>], out: &mut Vec<Line<'st
         .collect();
     out.push(Line::from(vec![RSpan::styled(
         bottom,
-        Style::default().fg(Color::Rgb(80, 80, 100)),
+        Style::default().fg(border_color),
     )]));
 }
 
 // ─── Inline spans ─────────────────────────────────────────────────────────────
 
-fn render_span(span: &Span) -> Vec<RSpan<'static>> {
+fn render_span(span: &Span, ic: &InlineColors) -> Vec<RSpan<'static>> {
     match span {
         Span::Text(t) => vec![RSpan::raw(t.clone())],
 
@@ -378,24 +380,21 @@ fn render_span(span: &Span) -> Vec<RSpan<'static>> {
         Span::Code(t) => vec![RSpan::styled(
             format!(" {} ", t),
             Style::default()
-                .fg(Color::Rgb(250, 200, 100))  // amber
-                .bg(Color::Rgb(40, 40, 48)),    // subtle dark bg — no backticks shown
+                .fg(ic.code_fg.to_color())
+                .bg(ic.code_bg.to_color()),
         )],
 
-        Span::Link { text, .. } => vec![
-            // Show only the link text; href visible in status bar when focused
-            RSpan::styled(
-                text.clone(),
-                Style::default()
-                    .fg(Color::Rgb(80, 190, 255))
-                    .add_modifier(Modifier::UNDERLINED),
-            ),
-        ],
+        Span::Link { text, .. } => vec![RSpan::styled(
+            text.clone(),
+            Style::default()
+                .fg(ic.link.to_color())
+                .add_modifier(Modifier::UNDERLINED),
+        )],
 
         Span::Strikethrough(t) => vec![RSpan::styled(
             t.clone(),
             Style::default()
-                .fg(Color::Rgb(120, 120, 120))
+                .fg(ic.strikethrough.to_color())
                 .add_modifier(Modifier::CROSSED_OUT),
         )],
     }

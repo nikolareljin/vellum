@@ -1,0 +1,32 @@
+{
+  "headings": {
+    "h1": "#ffd700",
+    "h2": "#64c8ff",
+    "h3": "#64dc78",
+    "h4": "#dc82ff",
+    "h5": "#64b4ff",
+    "h6": "#b4b4b4"
+  },
+  "code": {
+    "bg": "#1e1e24",
+    "header_bg": "#2d2d37",
+    "default_theme": "base16-ocean.dark",
+    "by_language": {},
+    "label_fg": "#c8c8c8"
+  },
+  "inline": {
+    "code_fg": "#fac864",
+    "code_bg": "#28282f",
+    "link": "#50beff",
+    "strikethrough": "#787878"
+  },
+  "blocks": {
+    "blockquote": "#64b4ff",
+    "hrule": "#505050",
+    "table_border": "#505064",
+    "table_header": "#ffd700",
+    "list_bullet": "#64c8ff",
+    "image_icon": "#c878ff",
+    "image_alt": "#a0a0a0"
+  }
+}

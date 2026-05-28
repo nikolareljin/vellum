@@ -3,14 +3,31 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 /// A block-level document element.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Element {
-    Heading { level: u8, text: String },
+    Heading {
+        level: u8,
+        text: String,
+    },
     Paragraph(Vec<Span>),
-    CodeBlock { lang: Option<String>, code: String },
+    CodeBlock {
+        lang: Option<String>,
+        code: String,
+    },
     BlockQuote(Vec<Element>),
-    List { ordered: bool, items: Vec<Vec<Element>> },
-    Table { headers: Vec<String>, rows: Vec<Vec<String>> },
-    Image { alt: String, src: String },
-    Video { src: String },
+    List {
+        ordered: bool,
+        items: Vec<Vec<Element>>,
+    },
+    Table {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
+    Image {
+        alt: String,
+        src: String,
+    },
+    Video {
+        src: String,
+    },
     HRule,
 }
 
@@ -265,9 +282,9 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                             depth -= 1;
                             if depth == 0 {
                                 if !item_events.is_empty() {
-                                    items.push(parse_events(wrap_tight_item(
-                                        std::mem::take(&mut item_events),
-                                    )));
+                                    items.push(parse_events(wrap_tight_item(std::mem::take(
+                                        &mut item_events,
+                                    ))));
                                 }
                                 break;
                             }
@@ -275,9 +292,9 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                         }
                         Event::Start(Tag::Item) => {
                             if depth == 1 && !item_events.is_empty() {
-                                items.push(parse_events(wrap_tight_item(
-                                    std::mem::take(&mut item_events),
-                                )));
+                                items.push(parse_events(wrap_tight_item(std::mem::take(
+                                    &mut item_events,
+                                ))));
                             } else if depth > 1 {
                                 item_events.push(events[i].clone());
                             }
@@ -308,10 +325,9 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                         Event::Start(Tag::TableHead) => in_header = true,
                         Event::End(TagEnd::TableHead) => in_header = false,
                         Event::Start(Tag::TableRow) => current_row.clear(),
-                        Event::End(TagEnd::TableRow)
-                            if !in_header => {
-                                rows.push(current_row.clone());
-                            }
+                        Event::End(TagEnd::TableRow) if !in_header => {
+                            rows.push(current_row.clone());
+                        }
                         Event::Start(Tag::TableCell) => cell_text.clear(),
                         Event::End(TagEnd::TableCell) => {
                             if in_header {

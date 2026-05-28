@@ -82,11 +82,11 @@ brew install --formula packaging/homebrew/vellum.rb
 
 ```bash
 # Download from Releases, then:
-sudo apt install ./vellum_0.5.0_amd64.deb
+sudo apt install ./vellum_0.6.0_amd64.deb
 
 # Or build locally:
 cargo install cargo-deb --locked && cargo deb
-sudo apt install ./target/debian/vellum_0.5.0_amd64.deb
+sudo apt install ./target/debian/vellum_0.6.0_amd64.deb
 ```
 
 ### From source
@@ -102,9 +102,11 @@ See [`docs/packaging.md`](docs/packaging.md) for full packaging details.
 ## Usage
 
 ```bash
-vellum <file.md>           # rich TUI viewer (default)
-vellum --code <file.md>    # open in $EDITOR / bat / less
-vellum --page              # show author info
+vellum <file.md>              # rich TUI viewer (default)
+vellum --code <file.md>       # open in $EDITOR / bat / less
+vellum --page                 # show author info
+vellum --theme dracula        # preview a theme (no file required)
+vellum --theme dracula <file> # open file with a specific theme
 ```
 
 ## Keyboard Shortcuts
@@ -117,6 +119,7 @@ vellum --page              # show author info
 | `PgUp` / `Ctrl+B` | Page up |
 | `g` / `Home` | Top of document |
 | `G` / `End` | Bottom of document |
+| `a` | About page |
 | `e` | Code view (spawns `$EDITOR` / `bat` / `less`) |
 | `Tab` / `Shift+Tab` | Cycle links |
 | `Enter` | Follow link / confirm search |

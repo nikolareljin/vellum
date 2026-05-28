@@ -3,6 +3,8 @@ use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
+use crate::theme::CodeColors;
+
 /// One rendered line = list of (syntect Style, owned text) pairs.
 pub type StyledLine = Vec<(Style, String)>;
 
@@ -12,15 +14,35 @@ thread_local! {
 }
 
 /// Highlight `code` with the given language hint.
-/// Returns one `StyledLine` per source line.
-/// Falls back to plain text for unknown / absent language.
-pub fn highlight_code(code: &str, lang: Option<&str>) -> Vec<StyledLine> {
+///
+/// The syntect theme is chosen per language via `code_colors.by_language`;
+/// if no per-language override exists the `code_colors.default_theme` is used.
+/// Falls back to plain text for unknown / absent languages, and to
+/// `base16-ocean.dark` when the requested syntect theme name is not found.
+pub fn highlight_code(code: &str, lang: Option<&str>, code_colors: &CodeColors) -> Vec<StyledLine> {
+    // Normalize to the first token so fences like ```rust ignore or ```rust,no_run
+    // match the "rust" syntax and by_language override rather than falling back.
+    let lang = lang
+        .and_then(|l| l.split(|c: char| c.is_whitespace() || c == ',').next())
+        .filter(|l| !l.is_empty());
+
     SS.with(|ss| {
         TS.with(|ts| {
             let syntax = lang
                 .and_then(|l| ss.find_syntax_by_token(l))
                 .unwrap_or_else(|| ss.find_syntax_plain_text());
-            let theme = &ts.themes["base16-ocean.dark"];
+
+            // Per-language override → default_theme → hard fallback
+            let theme_name = lang
+                .and_then(|l| code_colors.by_language.get(l).map(String::as_str))
+                .unwrap_or(&code_colors.default_theme);
+
+            let theme = ts
+                .themes
+                .get(theme_name)
+                .or_else(|| ts.themes.get("base16-ocean.dark"))
+                .expect("base16-ocean.dark is always present in syntect defaults");
+
             let mut hl = HighlightLines::new(syntax, theme);
             let mut out = Vec::new();
             for line in LinesWithEndings::from(code) {

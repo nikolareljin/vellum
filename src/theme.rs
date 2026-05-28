@@ -164,10 +164,12 @@ fn is_safe_theme_name(name: &str) -> bool {
 }
 
 /// Path to the user's theme override directory.
-/// Respects `$XDG_CONFIG_HOME`; falls back to `$HOME/.config`.
+/// Respects `$XDG_CONFIG_HOME` when it is set to an absolute path (XDG spec);
+/// falls back to `$HOME/.config` otherwise.
 fn user_theme_path(name: &str) -> Option<PathBuf> {
     let config_dir = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
     Some(
         config_dir

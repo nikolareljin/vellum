@@ -270,6 +270,33 @@ mod tests {
     }
 
     #[test]
+    fn user_theme_overrides_builtin() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let themes_dir = dir.path().join("vellum").join("themes");
+        std::fs::create_dir_all(&themes_dir).expect("create themes dir");
+        std::fs::write(
+            themes_dir.join("custom-test.json"),
+            r#"{"headings": {"h1": "#abcdef"}}"#,
+        )
+        .expect("write theme file");
+
+        let prev = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        let result = Theme::load(Some("custom-test"));
+        match prev {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+
+        let t = result.expect("user theme should load from temp XDG dir");
+        assert_eq!(
+            (t.headings.h1.0, t.headings.h1.1, t.headings.h1.2),
+            (0xab, 0xcd, 0xef),
+            "user override must take precedence over built-ins"
+        );
+    }
+
+    #[test]
     fn unsafe_theme_names_are_rejected() {
         assert!(Theme::load(Some("../dark")).is_err());
         assert!(Theme::load(Some("dark/theme")).is_err());

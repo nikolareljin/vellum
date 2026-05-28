@@ -16,7 +16,7 @@ mod video;
 #[command(name = "vellum", about = "Rich Markdown viewer for the terminal")]
 pub struct Cli {
     /// Markdown file to open
-    #[arg(required_unless_present = "page")]
+    #[arg(required_unless_present_any = &["page", "theme"])]
     pub file: Option<std::path::PathBuf>,
 
     /// Colour theme: dark (default), dracula, solarized, or a name from $XDG_CONFIG_HOME/vellum/themes/ (defaults to ~/.config/vellum/themes/)
@@ -32,6 +32,41 @@ pub struct Cli {
     pub page: bool,
 }
 
+const THEME_PREVIEW_MD: &str = r#"
+# Heading 1
+## Heading 2
+### Heading 3
+
+Paragraph with `inline code`, **bold**, *italic*, ~~strikethrough~~,
+and a [link](https://github.com).
+
+---
+
+> Blockquote line one.
+> Blockquote line two.
+
+- Item one
+- Item two
+  - Nested item
+- Item three
+
+| Column A | Column B | Column C |
+|----------|----------|----------|
+| alpha    | beta     | gamma    |
+| one      | two      | three    |
+
+```rust
+fn greet(name: &str) -> String {
+    format!("Hello, {}!", name)
+}
+```
+
+```python
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+```
+"#;
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -41,7 +76,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     let theme = theme::Theme::load(cli.theme.as_deref())?;
-    let file = cli.file.expect("file required when --page not set");
+
+    // When --theme is given without a file, show a built-in preview document.
+    let mut _preview_tmp: Option<tempfile::NamedTempFile> = None;
+    let file = match cli.file {
+        Some(f) => f,
+        None => {
+            use std::io::Write;
+            let mut tmp = tempfile::Builder::new()
+                .prefix("vellum-preview-")
+                .suffix(".md")
+                .tempfile()?;
+            tmp.write_all(THEME_PREVIEW_MD.as_bytes())?;
+            let path = tmp.path().to_path_buf();
+            _preview_tmp = Some(tmp); // keep alive until end of main
+            path
+        }
+    };
 
     if cli.code {
         app::open_code_view(&file)?;

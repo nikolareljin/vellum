@@ -26,6 +26,29 @@ fn test_highlight_no_lang() {
     assert!(!lines.is_empty());
 }
 
+#[test]
+fn test_by_language_override_normalizes_info_string() {
+    // "Solarized (light)" is bundled with syntect and differs from the default
+    // "base16-ocean.dark", so all three info-string forms should produce
+    // identical output to each other (same theme selected after normalization)
+    // and differ from the default-theme output.
+    let mut cc = CodeColors::default();
+    cc.by_language
+        .insert("rust".to_string(), "Solarized (light)".to_string());
+
+    let plain = highlight_code("let x = 1;", Some("rust"), &cc);
+    let spaced = highlight_code("let x = 1;", Some("rust ignore"), &cc);
+    let comma = highlight_code("let x = 1;", Some("rust,no_run"), &cc);
+
+    assert!(!plain.is_empty());
+    assert_eq!(plain, spaced, "rust ignore should normalize to rust");
+    assert_eq!(plain, comma, "rust,no_run should normalize to rust");
+
+    // The override must actually change the output vs default theme.
+    let default_out = highlight_code("let x = 1;", Some("rust"), &CodeColors::default());
+    assert_ne!(plain, default_out, "Solarized (light) should differ from base16-ocean.dark");
+}
+
 // ── Renderer tests ─────────────────────────────────────────────────────────────
 
 use ratatui::style::Modifier;

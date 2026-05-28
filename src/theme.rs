@@ -258,7 +258,10 @@ mod tests {
     #[test]
     fn unknown_theme_errors() {
         // Test the built-in lookup directly — no filesystem I/O, no $HOME dependency.
-        assert!(builtin("nonexistent").is_none(), "nonexistent should not be a built-in");
+        assert!(
+            builtin("nonexistent").is_none(),
+            "nonexistent should not be a built-in"
+        );
     }
 
     #[test]

@@ -233,6 +233,23 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Serialises tests that mutate the process-wide XDG_CONFIG_HOME env var so
+    // they cannot race when the test harness runs them in parallel threads.
+    static XDG_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_xdg_config_home<T, F: FnOnce() -> T>(path: &std::path::Path, f: F) -> T {
+        let _guard = XDG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", path);
+        let result = f();
+        match prev {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        result
+    }
 
     #[test]
     fn dark_theme_loads() {
@@ -262,13 +279,8 @@ mod tests {
         // Exercise Theme::load with an isolated config dir so neither user files
         // nor built-ins match — verifies the public not-found error path.
         let dir = tempfile::tempdir().expect("temp dir");
-        let prev = std::env::var_os("XDG_CONFIG_HOME");
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
-        let result = Theme::load(Some("nonexistent-theme-xyz"));
-        match prev {
-            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
+        let result =
+            with_xdg_config_home(dir.path(), || Theme::load(Some("nonexistent-theme-xyz")));
         let err = result.expect_err("unknown theme must return an error");
         let msg = err.to_string();
         assert!(
@@ -293,15 +305,8 @@ mod tests {
         )
         .expect("write theme file");
 
-        let prev = std::env::var_os("XDG_CONFIG_HOME");
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
-        let result = Theme::load(Some("custom-test"));
-        match prev {
-            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-
-        let t = result.expect("user theme should load from temp XDG dir");
+        let t = with_xdg_config_home(dir.path(), || Theme::load(Some("custom-test")))
+            .expect("user theme should load from temp XDG dir");
         assert_eq!(
             (t.headings.h1.0, t.headings.h1.1, t.headings.h1.2),
             (0xab, 0xcd, 0xef),

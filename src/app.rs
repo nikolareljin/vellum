@@ -292,13 +292,14 @@ fn follow_link(href: &str, file: &Path) -> Option<std::path::PathBuf> {
 fn viewport_row_to_entry(lines: &[DisplayLine], scroll: usize, row: usize) -> usize {
     let mut rows = 0usize;
     for (i, dl) in lines.iter().enumerate().skip(scroll) {
-        if rows >= row {
-            return i;
-        }
-        rows += match dl {
+        let entry_height = match dl {
             DisplayLine::Image { height, .. } => *height as usize,
             DisplayLine::Text(_) => 1,
         };
+        if row < rows + entry_height {
+            return i;
+        }
+        rows += entry_height;
     }
     lines.len().saturating_sub(1)
 }

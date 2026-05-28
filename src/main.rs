@@ -75,6 +75,10 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if cli.code && cli.file.is_none() {
+        anyhow::bail!("--code requires a file argument");
+    }
+
     let theme = theme::Theme::load(cli.theme.as_deref())?;
 
     // When --theme is given without a file, show a built-in preview document.

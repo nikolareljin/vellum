@@ -20,6 +20,12 @@ thread_local! {
 /// Falls back to plain text for unknown / absent languages, and to
 /// `base16-ocean.dark` when the requested syntect theme name is not found.
 pub fn highlight_code(code: &str, lang: Option<&str>, code_colors: &CodeColors) -> Vec<StyledLine> {
+    // Normalize to the first token so fences like ```rust ignore or ```rust,no_run
+    // match the "rust" syntax and by_language override rather than falling back.
+    let lang = lang
+        .and_then(|l| l.split(|c: char| c.is_whitespace() || c == ',').next())
+        .filter(|l| !l.is_empty());
+
     SS.with(|ss| {
         TS.with(|ts| {
             let syntax = lang

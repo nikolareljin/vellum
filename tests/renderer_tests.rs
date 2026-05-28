@@ -46,7 +46,10 @@ fn test_by_language_override_normalizes_info_string() {
 
     // The override must actually change the output vs default theme.
     let default_out = highlight_code("let x = 1;", Some("rust"), &CodeColors::default());
-    assert_ne!(plain, default_out, "Solarized (light) should differ from base16-ocean.dark");
+    assert_ne!(
+        plain, default_out,
+        "Solarized (light) should differ from base16-ocean.dark"
+    );
 }
 
 // ── Renderer tests ─────────────────────────────────────────────────────────────

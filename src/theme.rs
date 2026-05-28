@@ -276,7 +276,7 @@ mod tests {
         std::fs::create_dir_all(&themes_dir).expect("create themes dir");
         std::fs::write(
             themes_dir.join("custom-test.json"),
-            r#"{"headings": {"h1": "#abcdef"}}"#,
+            r##"{"headings": {"h1": "#abcdef"}}"##,
         )
         .expect("write theme file");
 

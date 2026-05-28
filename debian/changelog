@@ -6,7 +6,7 @@ vellum (0.6.0-1) unstable; urgency=medium
   * Theme preview: vellum --theme <name> without a file shows built-in demo
   * In-app About page accessible via the 'a' key
 
- -- Nik Reljin <nikola.reljin@gmail.com>  Wed, 28 May 2026 00:00:00 +0000
+ -- Nik Reljin <nikola.reljin@gmail.com>  Thu, 28 May 2026 00:00:00 +0000
 
 vellum (0.5.0-1) unstable; urgency=medium
 

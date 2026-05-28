@@ -26,3 +26,9 @@ jobs:
       tarball_url: "https://github.com/nikolareljin/vellum/archive/refs/tags/${{ github.ref_name }}.tar.gz"
       formula_path: "packaging/homebrew/vellum.rb"
       deps: ""
+      publish: "true"
+      tap_repo: "nikolareljin/homebrew-vellum"
+      tap_branch: "main"
+      tap_dir: "Formula"
+    secrets:
+      tap_token: ${{ secrets.TAP_TOKEN }}

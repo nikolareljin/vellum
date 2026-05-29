@@ -15,5 +15,6 @@ else
 fi
 
 cd "$ROOT_DIR"
-git submodule update --remote --merge
+git submodule sync --recursive
+git submodule update --init --recursive --remote --merge
 echo "Submodules updated."

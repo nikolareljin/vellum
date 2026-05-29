@@ -67,15 +67,17 @@ cd vellum
 > export PATH="$HOME/.local/bin:$PATH"
 > ```
 
+### Cargo (quickest one-liner, any platform with Rust)
+
+```bash
+cargo install --locked --git https://github.com/nikolareljin/vellum --bin vellum
+```
+
 ### Homebrew (macOS / Linux)
 
 ```bash
-# Once a tap is published:
-brew tap nikolareljin/vellum https://github.com/nikolareljin/homebrew-vellum
+brew tap nikolareljin/tap
 brew install vellum
-
-# Or install directly from the local formula:
-brew install --formula packaging/homebrew/vellum.rb
 ```
 
 ### DEB package (Debian / Ubuntu)

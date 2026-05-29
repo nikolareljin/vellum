@@ -209,4 +209,4 @@ When cutting a new release:
 5. Commit: `git commit -m "chore: bump to <version>"`
 6. Tag: `git tag <version>` (no `v` prefix — see tagging convention)
 7. Push tag: `git push origin <version>`
-8. CI triggers: `rust.yml`, `rust-scan.yml`, `release.yml`, `release-tarballs.yml`, `deb-build.yml`
+8. CI triggers: `release.yml`, `release-tarballs.yml`, `deb-build.yml`

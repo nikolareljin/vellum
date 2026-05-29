@@ -146,11 +146,12 @@ jobs:
           sha_x86_64="$(awk '{print $1}' sha256-macos-x86_64.txt)"
           sha_linux="$(awk '{print $1}'  sha256-linux-x86_64.txt)"
 
-          VERSION="$version" SHA_ARM64="$sha_arm64" SHA_X86_64="$sha_x86_64" SHA_LINUX="$sha_linux" \
+          TAG="$tag" VERSION="$version" SHA_ARM64="$sha_arm64" SHA_X86_64="$sha_x86_64" SHA_LINUX="$sha_linux" \
           python3 - <<'PY'
           import re, os
           from pathlib import Path
 
+          orig_tag = os.environ["TAG"]
           v        = os.environ["VERSION"]
           arm64    = os.environ["SHA_ARM64"]
           x86_64   = os.environ["SHA_X86_64"]
@@ -165,7 +166,7 @@ jobs:
             desc "Rich Markdown viewer for the terminal"
             homepage "https://github.com/nikolareljin/vellum"
             version "{v}"
-            tag = version
+            tag = "{orig_tag}"
 
             on_macos do
               if Hardware::CPU.arm?

@@ -25,5 +25,4 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/rust-release.yml@production
     with:
       bin_name: "vellum"
-      linux_gnu_aliases: "deb,pacman,yum,redhat"
       release_tag: ${{ inputs.release_tag }}

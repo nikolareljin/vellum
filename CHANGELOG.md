@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-05-31
+
+### Added
+- `scripts/check-md-images.sh`: lint script that rejects `<img src="https://…">` in Markdown files and enforces native `![alt](url)` image syntax
+- `.github/workflows/md-lint.yml`: CI job that runs on every Markdown change and calls the lint script (closes #6)
+
 ## [0.6.0] — 2026-05-27
 
 ### Added

@@ -1,0 +1,24 @@
+name: Markdown Lint
+
+on:
+  push:
+    branches: [main]
+    paths: ["**/*.md"]
+  pull_request:
+    branches: [main]
+    paths: ["**/*.md"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  md-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for external <img> src in Markdown files
+        run: bash scripts/check-md-images.sh

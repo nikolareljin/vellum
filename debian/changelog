@@ -3,7 +3,7 @@ vellum (0.6.1-1) unstable; urgency=low
   * Render <img src="…"> HTML tags in TUI (was silently ignored) (closes #6)
   * Fetch remote images over HTTP/HTTPS via ureq
 
- -- Nik Reljin <nikola.reljin@gmail.com>  Sat, 31 May 2026 00:00:00 +0000
+ -- Nik Reljin <nikola.reljin@gmail.com>  Sun, 31 May 2026 00:00:00 +0000
 
 vellum (0.6.0-1) unstable; urgency=medium
 

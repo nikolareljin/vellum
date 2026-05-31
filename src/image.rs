@@ -3,6 +3,7 @@ use image::DynamicImage;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::svg;
 
@@ -19,15 +20,33 @@ pub fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage> {
     Ok(img)
 }
 
+/// Maximum bytes accepted from a remote image response (20 MiB).
+const MAX_REMOTE_BYTES: u64 = 20 * 1024 * 1024;
+
 /// Fetch and decode a remote image over HTTP or HTTPS.
 pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     let mut buf = Vec::new();
     ureq::get(url)
+        .timeout(Duration::from_secs(30))
         .call()
         .map_err(|e| anyhow::anyhow!("fetch {url}: {e}"))?
         .into_reader()
+        .take(MAX_REMOTE_BYTES + 1)
         .read_to_end(&mut buf)?;
-    if svg::is_svg_path(url) {
+    if buf.len() as u64 > MAX_REMOTE_BYTES {
+        anyhow::bail!(
+            "remote image too large (>{} MiB)",
+            MAX_REMOTE_BYTES / 1_048_576
+        );
+    }
+    // Strip query string and fragment before SVG extension check so that
+    // URLs like `.../logo.svg?raw=1` are correctly rasterised.
+    let path_part = url
+        .split('?')
+        .next()
+        .and_then(|s| s.split('#').next())
+        .unwrap_or(url);
+    if svg::is_svg_path(path_part) {
         return svg::rasterize(&buf);
     }
     Ok(image::load_from_memory(&buf)?)

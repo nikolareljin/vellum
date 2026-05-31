@@ -65,16 +65,32 @@ fn heading_level(level: HeadingLevel) -> u8 {
 /// Handles double-quoted and single-quoted values; attribute name compared
 /// case-insensitively via `to_ascii_lowercase()` (1-to-1 byte mapping, so
 /// byte offsets into the original string remain valid).
+///
+/// A word-boundary check prevents false positives: `html_attr(html, "src")`
+/// will not match the `src` inside `data-src="..."`.
 fn html_attr(html: &str, attr: &str) -> Option<String> {
     let html_lc = html.to_ascii_lowercase();
     let attr_lc = attr.to_ascii_lowercase();
     for quote in ['"', '\''] {
         let needle = format!("{}={}", attr_lc, quote);
-        if let Some(pos) = html_lc.find(&needle) {
-            let start = pos + needle.len();
-            let rest = &html[start..];
-            if let Some(end) = rest.find(quote) {
-                return Some(rest[..end].to_owned());
+        let mut search_from = 0;
+        while let Some(rel_pos) = html_lc[search_from..].find(&needle) {
+            let pos = search_from + rel_pos;
+            // The byte immediately before the attribute name must be whitespace
+            // or the start of the string — prevents matching inside longer names
+            // like `data-src`.
+            let preceded_by_boundary =
+                pos == 0 || matches!(html_lc.as_bytes()[pos - 1], b' ' | b'\t' | b'\n' | b'\r');
+            if preceded_by_boundary {
+                let start = pos + needle.len();
+                let rest = &html[start..];
+                if let Some(end) = rest.find(quote) {
+                    return Some(rest[..end].to_owned());
+                }
+            }
+            search_from = pos + 1;
+            if search_from >= html_lc.len() {
+                break;
             }
         }
     }
@@ -231,9 +247,16 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                             // Do NOT add a text span — the block element
                             // renders the image/video; no "[img: alt]" noise.
                         }
-                        // Inline HTML — pick out <img> tags
+                        // Inline HTML — pick out <img> tags.
+                        // Flush accumulated spans first so that surrounding text
+                        // appears before the image in document order.
                         Event::InlineHtml(html) => {
                             if let Some((alt, src)) = extract_img_tag(html) {
+                                if !spans.is_empty() {
+                                    elements.push(Element::Paragraph(
+                                        std::mem::take(&mut spans),
+                                    ));
+                                }
                                 if is_video_src(&src) {
                                     elements.push(Element::Video { src });
                                 } else {
@@ -413,20 +436,29 @@ mod tests {
     #[test]
     fn html_attr_double_quoted() {
         let html = r#"<img src="https://example.com/x.png" alt="Demo" />"#;
-        assert_eq!(html_attr(html, "src").as_deref(), Some("https://example.com/x.png"));
+        assert_eq!(
+            html_attr(html, "src").as_deref(),
+            Some("https://example.com/x.png")
+        );
         assert_eq!(html_attr(html, "alt").as_deref(), Some("Demo"));
     }
 
     #[test]
     fn html_attr_single_quoted() {
         let html = "<img src='https://example.com/x.png' alt='Demo' />";
-        assert_eq!(html_attr(html, "src").as_deref(), Some("https://example.com/x.png"));
+        assert_eq!(
+            html_attr(html, "src").as_deref(),
+            Some("https://example.com/x.png")
+        );
     }
 
     #[test]
     fn html_attr_case_insensitive_name() {
         let html = r#"<IMG SRC="https://example.com/x.png" ALT="Demo" />"#;
-        assert_eq!(html_attr(html, "src").as_deref(), Some("https://example.com/x.png"));
+        assert_eq!(
+            html_attr(html, "src").as_deref(),
+            Some("https://example.com/x.png")
+        );
         assert_eq!(html_attr(html, "alt").as_deref(), Some("Demo"));
     }
 
@@ -436,6 +468,22 @@ mod tests {
         assert!(html_attr(html, "src").is_none());
     }
 
+    #[test]
+    fn html_attr_no_false_positive_on_data_src() {
+        // data-src should NOT match when searching for "src"
+        let html = r#"<img data-src="https://cdn.example.com/x.png" />"#;
+        assert!(html_attr(html, "src").is_none());
+    }
+
+    #[test]
+    fn html_attr_data_src_itself_is_extractable() {
+        let html = r#"<img data-src="https://cdn.example.com/x.png" />"#;
+        assert_eq!(
+            html_attr(html, "data-src").as_deref(),
+            Some("https://cdn.example.com/x.png")
+        );
+    }
+
     // ── extract_img_tag ───────────────────────────────────────────────────────
 
     #[test]
@@ -443,7 +491,10 @@ mod tests {
         let html = r#"<img width="1080" height="2220" alt="Screenshot" src="https://github.com/user-attachments/assets/abc" />"#;
         assert_eq!(
             extract_img_tag(html),
-            Some(("Screenshot".into(), "https://github.com/user-attachments/assets/abc".into()))
+            Some((
+                "Screenshot".into(),
+                "https://github.com/user-attachments/assets/abc".into()
+            ))
         );
     }
 
@@ -511,6 +562,32 @@ mod tests {
                 alt: "Alt text".into(),
                 src: "https://example.com/x.png".into(),
             }]
+        );
+    }
+
+    // ── parse: inline <img> ordering ─────────────────────────────────────────
+
+    #[test]
+    fn parse_inline_img_flushes_preceding_text() {
+        // "hello <img /> world" must yield [Paragraph("hello "), Image, Paragraph(" world")]
+        // not [Image, Paragraph("hello  world")]
+        let md = "hello <img src=\"https://example.com/x.png\" alt=\"x\" /> world\n";
+        let elements = parse(md);
+        assert_eq!(elements.len(), 3);
+        assert_eq!(
+            elements[0],
+            Element::Paragraph(vec![Span::Text("hello ".into())])
+        );
+        assert_eq!(
+            elements[1],
+            Element::Image {
+                alt: "x".into(),
+                src: "https://example.com/x.png".into(),
+            }
+        );
+        assert_eq!(
+            elements[2],
+            Element::Paragraph(vec![Span::Text(" world".into())])
         );
     }
 }

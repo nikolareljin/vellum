@@ -216,10 +216,11 @@ fn build_display_lines(
         match el {
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
-                // Only create an Image slot when the file is local and exists.
-                // Remote URLs and missing files fall back to the styled text
-                // placeholder so they don't leave an invisible blank gap.
-                if is_local_file_readable(&resolved) {
+                let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
+                // Create an Image slot for local readable files and remote URLs.
+                // Missing local files fall back to the styled text placeholder
+                // so they don't leave an invisible blank gap.
+                if is_remote || is_local_file_readable(&resolved) {
                     out.push(DisplayLine::Image {
                         src: resolved,
                         height: 10,
@@ -318,7 +319,7 @@ fn link_at_line(doc_links: &[(String, usize)], target_line: usize) -> Option<&st
 }
 
 /// Returns `true` when `src` is a local path that exists and is a regular file.
-/// Remote URLs are always `false`; they cannot be rendered inline.
+/// Remote URLs return `false`; callers that support remote fetching check separately.
 fn is_local_file_readable(src: &str) -> bool {
     if src.starts_with("http://") || src.starts_with("https://") {
         return false;

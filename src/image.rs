@@ -1,6 +1,7 @@
 use anyhow::Result;
 use image::DynamicImage;
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 
 use crate::svg;
@@ -18,6 +19,20 @@ pub fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage> {
     Ok(img)
 }
 
+/// Fetch and decode a remote image over HTTP or HTTPS.
+pub fn load_image_url(url: &str) -> Result<DynamicImage> {
+    let mut buf = Vec::new();
+    ureq::get(url)
+        .call()
+        .map_err(|e| anyhow::anyhow!("fetch {url}: {e}"))?
+        .into_reader()
+        .read_to_end(&mut buf)?;
+    if svg::is_svg_path(url) {
+        return svg::rasterize(&buf);
+    }
+    Ok(image::load_from_memory(&buf)?)
+}
+
 /// In-memory image cache: resolved src path → loaded [`DynamicImage`].
 #[derive(Default)]
 pub struct ImageCache {
@@ -27,10 +42,11 @@ pub struct ImageCache {
 impl ImageCache {
     pub fn get_or_load(&mut self, src: &str) -> Result<&DynamicImage> {
         if !self.cache.contains_key(src) {
-            if src.starts_with("http://") || src.starts_with("https://") {
-                anyhow::bail!("remote images not yet supported — use a local path");
-            }
-            let img = load_image(src)?;
+            let img = if src.starts_with("http://") || src.starts_with("https://") {
+                load_image_url(src)?
+            } else {
+                load_image(src)?
+            };
             self.cache.insert(src.to_owned(), img);
         }
         Ok(self.cache.get(src).unwrap())

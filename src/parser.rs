@@ -61,6 +61,36 @@ fn heading_level(level: HeadingLevel) -> u8 {
     }
 }
 
+/// Extract the value of an HTML attribute from a raw HTML snippet.
+/// Handles double-quoted and single-quoted values; attribute name compared
+/// case-insensitively via `to_ascii_lowercase()` (1-to-1 byte mapping, so
+/// byte offsets into the original string remain valid).
+fn html_attr(html: &str, attr: &str) -> Option<String> {
+    let html_lc = html.to_ascii_lowercase();
+    let attr_lc = attr.to_ascii_lowercase();
+    for quote in ['"', '\''] {
+        let needle = format!("{}={}", attr_lc, quote);
+        if let Some(pos) = html_lc.find(&needle) {
+            let start = pos + needle.len();
+            let rest = &html[start..];
+            if let Some(end) = rest.find(quote) {
+                return Some(rest[..end].to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// If `html` contains an `<img>` tag, return `(alt, src)`.
+fn extract_img_tag(html: &str) -> Option<(String, String)> {
+    if !html.to_ascii_lowercase().contains("<img") {
+        return None;
+    }
+    let src = html_attr(html, "src")?;
+    let alt = html_attr(html, "alt").unwrap_or_default();
+    Some((alt, src))
+}
+
 /// Returns `true` when `src` looks like a video file by extension.
 fn is_video_src(src: &str) -> bool {
     let lower = src.to_lowercase();
@@ -201,6 +231,16 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                             // Do NOT add a text span — the block element
                             // renders the image/video; no "[img: alt]" noise.
                         }
+                        // Inline HTML — pick out <img> tags
+                        Event::InlineHtml(html) => {
+                            if let Some((alt, src)) = extract_img_tag(html) {
+                                if is_video_src(&src) {
+                                    elements.push(Element::Video { src });
+                                } else {
+                                    elements.push(Element::Image { alt, src });
+                                }
+                            }
+                        }
                         Event::SoftBreak => spans.push(Span::Text(" ".into())),
                         Event::HardBreak
                             // Flush current spans as a paragraph then start fresh
@@ -234,6 +274,17 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                     i += 1;
                 }
                 elements.push(Element::CodeBlock { lang, code });
+            }
+
+            // ── Raw HTML blocks — pick out <img> tags ─────────────────────────
+            Event::Html(html) => {
+                if let Some((alt, src)) = extract_img_tag(html) {
+                    if is_video_src(&src) {
+                        elements.push(Element::Video { src });
+                    } else {
+                        elements.push(Element::Image { alt, src });
+                    }
+                }
             }
 
             // ── Horizontal rule ───────────────────────────────────────────────
@@ -351,4 +402,115 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
     }
 
     elements
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── html_attr ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn html_attr_double_quoted() {
+        let html = r#"<img src="https://example.com/x.png" alt="Demo" />"#;
+        assert_eq!(html_attr(html, "src").as_deref(), Some("https://example.com/x.png"));
+        assert_eq!(html_attr(html, "alt").as_deref(), Some("Demo"));
+    }
+
+    #[test]
+    fn html_attr_single_quoted() {
+        let html = "<img src='https://example.com/x.png' alt='Demo' />";
+        assert_eq!(html_attr(html, "src").as_deref(), Some("https://example.com/x.png"));
+    }
+
+    #[test]
+    fn html_attr_case_insensitive_name() {
+        let html = r#"<IMG SRC="https://example.com/x.png" ALT="Demo" />"#;
+        assert_eq!(html_attr(html, "src").as_deref(), Some("https://example.com/x.png"));
+        assert_eq!(html_attr(html, "alt").as_deref(), Some("Demo"));
+    }
+
+    #[test]
+    fn html_attr_missing_returns_none() {
+        let html = r#"<img alt="Demo" />"#;
+        assert!(html_attr(html, "src").is_none());
+    }
+
+    // ── extract_img_tag ───────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_img_tag_full() {
+        let html = r#"<img width="1080" height="2220" alt="Screenshot" src="https://github.com/user-attachments/assets/abc" />"#;
+        assert_eq!(
+            extract_img_tag(html),
+            Some(("Screenshot".into(), "https://github.com/user-attachments/assets/abc".into()))
+        );
+    }
+
+    #[test]
+    fn extract_img_tag_no_alt() {
+        let html = r#"<img src="https://example.com/x.png" />"#;
+        assert_eq!(
+            extract_img_tag(html),
+            Some(("".into(), "https://example.com/x.png".into()))
+        );
+    }
+
+    #[test]
+    fn extract_img_tag_non_img_html_returns_none() {
+        assert!(extract_img_tag("<div>hello</div>").is_none());
+        assert!(extract_img_tag("<!-- comment -->").is_none());
+    }
+
+    #[test]
+    fn extract_img_tag_no_src_returns_none() {
+        assert!(extract_img_tag(r#"<img alt="no-src" />"#).is_none());
+    }
+
+    // ── parse: block-level <img> ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_block_html_img_becomes_image_element() {
+        let md = "<img src=\"https://example.com/x.png\" alt=\"Demo\" />\n";
+        let elements = parse(md);
+        assert_eq!(
+            elements,
+            vec![Element::Image {
+                alt: "Demo".into(),
+                src: "https://example.com/x.png".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_block_html_img_no_alt() {
+        let md = "<img src=\"https://example.com/x.png\" />\n";
+        let elements = parse(md);
+        assert_eq!(
+            elements,
+            vec![Element::Image {
+                alt: "".into(),
+                src: "https://example.com/x.png".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_block_html_non_img_is_ignored() {
+        let elements = parse("<div>hello</div>\n");
+        assert!(elements.is_empty());
+    }
+
+    #[test]
+    fn parse_markdown_img_still_works() {
+        let md = "![Alt text](https://example.com/x.png)\n";
+        let elements = parse(md);
+        assert_eq!(
+            elements,
+            vec![Element::Image {
+                alt: "Alt text".into(),
+                src: "https://example.com/x.png".into(),
+            }]
+        );
+    }
 }

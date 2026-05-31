@@ -456,7 +456,10 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             }
                             y_offset += height;
                         } else {
-                            y_offset += 1;
+                            // Image failed to load — advance by the full height so
+                            // scroll math (max_scroll, viewport_row_to_entry) stays
+                            // consistent with the DisplayLine::Image entry size.
+                            y_offset += height;
                         }
                     }
                 }

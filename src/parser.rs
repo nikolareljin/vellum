@@ -62,37 +62,49 @@ fn heading_level(level: HeadingLevel) -> u8 {
 }
 
 /// Extract the value of an HTML attribute from a raw HTML snippet.
-/// Handles double-quoted and single-quoted values; attribute name compared
-/// case-insensitively via `to_ascii_lowercase()` (1-to-1 byte mapping, so
-/// byte offsets into the original string remain valid).
 ///
-/// A word-boundary check prevents false positives: `html_attr(html, "src")`
-/// will not match the `src` inside `data-src="..."`.
+/// - Attribute name comparison is case-insensitive (`to_ascii_lowercase`,
+///   1-to-1 byte mapping so byte offsets stay valid).
+/// - Accepts optional ASCII whitespace around `=`: `src="…"`, `src = "…"`, etc.
+/// - Word-boundary check: the byte before the attribute name must be
+///   whitespace or the start of the string, preventing `data-src` from
+///   matching when searching for `src`.
 fn html_attr(html: &str, attr: &str) -> Option<String> {
     let html_lc = html.to_ascii_lowercase();
     let attr_lc = attr.to_ascii_lowercase();
-    for quote in ['"', '\''] {
-        let needle = format!("{}={}", attr_lc, quote);
-        let mut search_from = 0;
-        while let Some(rel_pos) = html_lc[search_from..].find(&needle) {
-            let pos = search_from + rel_pos;
-            // The byte immediately before the attribute name must be whitespace
-            // or the start of the string — prevents matching inside longer names
-            // like `data-src`.
-            let preceded_by_boundary =
-                pos == 0 || matches!(html_lc.as_bytes()[pos - 1], b' ' | b'\t' | b'\n' | b'\r');
-            if preceded_by_boundary {
-                let start = pos + needle.len();
-                let rest = &html[start..];
-                if let Some(end) = rest.find(quote) {
-                    return Some(rest[..end].to_owned());
+    let bytes = html_lc.as_bytes();
+
+    let mut i = 0;
+    while i + attr_lc.len() <= bytes.len() {
+        let rel = html_lc[i..].find(&attr_lc)?;
+        let pos = i + rel;
+
+        let boundary = pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\n' | b'\r');
+
+        if boundary {
+            let mut j = pos + attr_lc.len();
+            // Skip optional whitespace before '='
+            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'=' {
+                j += 1;
+                // Skip optional whitespace after '='
+                while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+                    j += 1;
+                }
+                if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
+                    let quote = bytes[j] as char;
+                    // Use original html (not html_lc) to preserve value casing
+                    let val_rest = &html[j + 1..];
+                    if let Some(end) = val_rest.find(quote) {
+                        return Some(val_rest[..end].to_owned());
+                    }
                 }
             }
-            search_from = pos + 1;
-            if search_from >= html_lc.len() {
-                break;
-            }
         }
+
+        i = pos + 1;
     }
     None
 }
@@ -473,6 +485,21 @@ mod tests {
         // data-src should NOT match when searching for "src"
         let html = r#"<img data-src="https://cdn.example.com/x.png" />"#;
         assert!(html_attr(html, "src").is_none());
+    }
+
+    #[test]
+    fn html_attr_whitespace_around_equals() {
+        // HTML allows spaces around '=': src = "..."
+        let html = r#"<img src = "https://example.com/x.png" />"#;
+        assert_eq!(
+            html_attr(html, "src").as_deref(),
+            Some("https://example.com/x.png")
+        );
+        let html2 = r#"<img src ="https://example.com/x.png" />"#;
+        assert_eq!(
+            html_attr(html2, "src").as_deref(),
+            Some("https://example.com/x.png")
+        );
     }
 
     #[test]

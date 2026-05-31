@@ -25,6 +25,9 @@ const MAX_REMOTE_BYTES: u64 = 20 * 1024 * 1024;
 
 /// Fetch and decode a remote image over HTTP or HTTPS.
 pub fn load_image_url(url: &str) -> Result<DynamicImage> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        anyhow::bail!("load_image_url: expected http:// or https:// URL, got: {url}");
+    }
     let mut buf = Vec::new();
     ureq::get(url)
         .timeout(Duration::from_secs(30))

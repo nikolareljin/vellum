@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-05-31
+
+### Added
+- `ureq` dependency for fetching remote images over HTTP/HTTPS
+- `image::load_image_url`: fetches and decodes images from URLs; SVG URLs are rasterised via `resvg`
+- `parser::html_attr` / `parser::extract_img_tag`: safe HTML attribute extraction (no shell, no `eval`)
+
+### Fixed
+- `<img src="…">` HTML tags in Markdown files are now rendered in the TUI; both block-level (`Event::Html`) and inline (`Event::InlineHtml`) variants are handled (closes #6)
+
 ## [0.6.0] — 2026-05-27
 
 ### Added

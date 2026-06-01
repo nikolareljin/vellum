@@ -555,12 +555,18 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             // Show a visible placeholder so failures aren't
                             // silent blank gaps, while still consuming the
                             // reserved height to keep scroll math consistent.
+                            // Strip query/fragment to avoid leaking tokens in the UI.
                             // Truncate at a char boundary to avoid panics on non-ASCII URLs.
-                            let label: &str = &src[..src
+                            let safe_src = src
+                                .split('?')
+                                .next()
+                                .and_then(|s| s.split('#').next())
+                                .unwrap_or(src);
+                            let label: &str = &safe_src[..safe_src
                                 .char_indices()
                                 .nth(60)
                                 .map(|(i, _)| i)
-                                .unwrap_or(src.len())];
+                                .unwrap_or(safe_src.len())];
                             f.render_widget(
                                 Paragraph::new(Line::from(Span::styled(
                                     format!(" [image unavailable: {label}]"),

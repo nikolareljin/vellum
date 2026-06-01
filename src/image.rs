@@ -31,13 +31,19 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
         anyhow::bail!("load_image_url: expected http:// or https:// URL, got: {url}");
     }
     if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
-        anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set): {url}");
+        anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set)");
     }
+    // Strip query string and fragment for error messages to avoid leaking tokens.
+    let safe_url = url
+        .split('?')
+        .next()
+        .and_then(|s| s.split('#').next())
+        .unwrap_or(url);
     let mut buf = Vec::new();
     ureq::get(url)
         .timeout(Duration::from_secs(10))
         .call()
-        .map_err(|e| anyhow::anyhow!("fetch {url}: {e}"))?
+        .map_err(|e| anyhow::anyhow!("fetch {safe_url}: {e}"))?
         .into_reader()
         .take(MAX_REMOTE_BYTES + 1)
         .read_to_end(&mut buf)?;
@@ -59,14 +65,7 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
             );
         }
     }
-    // Strip query string and fragment before SVG extension check so that
-    // URLs like `.../logo.svg?raw=1` are correctly rasterised.
-    let path_part = url
-        .split('?')
-        .next()
-        .and_then(|s| s.split('#').next())
-        .unwrap_or(url);
-    if svg::is_svg_path(path_part) {
+    if svg::is_svg_path(safe_url) {
         return svg::rasterize(&buf);
     }
     Ok(image::load_from_memory(&buf)?)

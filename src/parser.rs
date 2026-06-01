@@ -65,7 +65,7 @@ fn heading_level(level: HeadingLevel) -> u8 {
 ///
 /// - Attribute name comparison is case-insensitive (`to_ascii_lowercase`,
 ///   1-to-1 byte mapping so byte offsets stay valid).
-/// - Accepts optional ASCII whitespace around `=`: `src="…"`, `src = "…"`, etc.
+/// - Accepts optional ASCII whitespace (space, tab, `\n`, `\r`) around `=`.
 /// - Word-boundary check: the byte before the attribute name must be
 ///   whitespace or the start of the string, preventing `data-src` from
 ///   matching when searching for `src`.
@@ -84,13 +84,13 @@ fn html_attr(html: &str, attr: &str) -> Option<String> {
         if boundary {
             let mut j = pos + attr_lc.len();
             // Skip optional whitespace before '='
-            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
                 j += 1;
             }
             if j < bytes.len() && bytes[j] == b'=' {
                 j += 1;
                 // Skip optional whitespace after '='
-                while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+                while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
                     j += 1;
                 }
                 if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
@@ -110,12 +110,20 @@ fn html_attr(html: &str, attr: &str) -> Option<String> {
 }
 
 /// If `html` contains an `<img>` tag, return `(alt, src)`.
+/// Attribute extraction is scoped to just the `<img … >` tag so that other
+/// tags earlier in the snippet (e.g. `<div src="…">`) cannot shadow the
+/// image's real `src`.
 fn extract_img_tag(html: &str) -> Option<(String, String)> {
-    if !html.to_ascii_lowercase().contains("<img") {
-        return None;
-    }
-    let src = html_attr(html, "src")?;
-    let alt = html_attr(html, "alt").unwrap_or_default();
+    let lower = html.to_ascii_lowercase();
+    let img_start = lower.find("<img")?;
+    // Narrow to the tag itself so html_attr cannot wander into surrounding markup.
+    let tag_end = lower[img_start..]
+        .find('>')
+        .map(|p| img_start + p + 1)
+        .unwrap_or(html.len());
+    let img_tag = &html[img_start..tag_end];
+    let src = html_attr(img_tag, "src")?;
+    let alt = html_attr(img_tag, "alt").unwrap_or_default();
     Some((alt, src))
 }
 
@@ -543,6 +551,25 @@ mod tests {
     #[test]
     fn extract_img_tag_no_src_returns_none() {
         assert!(extract_img_tag(r#"<img alt="no-src" />"#).is_none());
+    }
+
+    #[test]
+    fn extract_img_tag_scoped_to_img_not_surrounding_tags() {
+        // A leading tag with src= must not shadow the img's real src
+        let html = r#"<div src="https://wrong.example.com/x.png"><img src="https://right.example.com/x.png" /></div>"#;
+        assert_eq!(
+            extract_img_tag(html),
+            Some(("".into(), "https://right.example.com/x.png".into()))
+        );
+    }
+
+    #[test]
+    fn html_attr_newline_whitespace_around_equals() {
+        let html = "<img src\n=\n\"https://example.com/x.png\" />";
+        assert_eq!(
+            html_attr(html, "src").as_deref(),
+            Some("https://example.com/x.png")
+        );
     }
 
     // ── parse: block-level <img> ──────────────────────────────────────────────

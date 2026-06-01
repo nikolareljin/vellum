@@ -117,6 +117,9 @@ struct App {
     /// Maps each SearchResult.line_index (into text-only lines) back to the
     /// corresponding index in `self.lines` (which includes image entries).
     search_line_map: Vec<usize>,
+    /// Sources whose load already failed — skipped on subsequent redraws so a
+    /// slow/unreachable URL doesn't block the render loop every 100 ms.
+    failed_images: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -143,6 +146,7 @@ impl App {
             search_results: Vec::new(),
             search_cursor: 0,
             search_line_map: Vec::new(),
+            failed_images: Default::default(),
         }
     }
 
@@ -433,11 +437,20 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         y_offset += 1;
                     }
                     DisplayLine::Image { src, height } => {
-                        // Load image state on first encounter
-                        if !app.image_states.contains_key(src) {
-                            if let Ok(dyn_img) = app.image_cache.get_or_load(src) {
-                                let state = app.picker.new_resize_protocol(dyn_img.clone());
-                                app.image_states.insert(src.clone(), state);
+                        // Load image state on first encounter; record failures so
+                        // the render loop does not retry a broken URL every tick.
+                        if !app.image_states.contains_key(src)
+                            && !app.failed_images.contains(src)
+                        {
+                            match app.image_cache.get_or_load(src) {
+                                Ok(dyn_img) => {
+                                    let state =
+                                        app.picker.new_resize_protocol(dyn_img.clone());
+                                    app.image_states.insert(src.clone(), state);
+                                }
+                                Err(_) => {
+                                    app.failed_images.insert(src.clone());
+                                }
                             }
                         }
 

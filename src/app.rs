@@ -490,7 +490,12 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             // Show a visible placeholder so failures aren't
                             // silent blank gaps, while still consuming the
                             // reserved height to keep scroll math consistent.
-                            let label = if src.len() > 60 { &src[..60] } else { src.as_str() };
+                            // Truncate at a char boundary to avoid panics on non-ASCII URLs.
+                            let label: &str = &src[..src
+                                .char_indices()
+                                .nth(60)
+                                .map(|(i, _)| i)
+                                .unwrap_or(src.len())];
                             f.render_widget(
                                 Paragraph::new(Line::from(Span::styled(
                                     format!(" [image unavailable: {label}]"),

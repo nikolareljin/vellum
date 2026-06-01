@@ -291,13 +291,17 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                                 }
                                 i += 1;
                             }
+                            // Flush any preceding text spans so surrounding text
+                            // (e.g. "hello ![x](u) world") appears in document
+                            // order: Paragraph("hello ") → Image → Paragraph(" world").
+                            if !spans.is_empty() {
+                                elements.push(Element::Paragraph(std::mem::take(&mut spans)));
+                            }
                             if is_video_src(&src) {
                                 elements.push(Element::Video { src });
                             } else {
                                 elements.push(Element::Image { alt, src });
                             }
-                            // Do NOT add a text span — the block element
-                            // renders the image/video; no "[img: alt]" noise.
                         }
                         // Inline HTML — pick out <img> tags.
                         // Flush accumulated spans first so that surrounding text
@@ -667,7 +671,32 @@ mod tests {
         );
     }
 
-    // ── parse: inline <img> ordering ─────────────────────────────────────────
+    // ── parse: image ordering (both Markdown and HTML) ───────────────────────
+
+    #[test]
+    fn parse_markdown_inline_img_flushes_preceding_text() {
+        // "hello ![x](url) world" must yield
+        // [Paragraph("hello "), Image, Paragraph(" world")]
+        // not [Image, Paragraph("hello  world")]
+        let md = "hello ![x](https://example.com/x.png) world\n";
+        let elements = parse(md);
+        assert_eq!(elements.len(), 3);
+        assert_eq!(
+            elements[0],
+            Element::Paragraph(vec![Span::Text("hello ".into())])
+        );
+        assert_eq!(
+            elements[1],
+            Element::Image {
+                alt: "x".into(),
+                src: "https://example.com/x.png".into(),
+            }
+        );
+        assert_eq!(
+            elements[2],
+            Element::Paragraph(vec![Span::Text(" world".into())])
+        );
+    }
 
     #[test]
     fn parse_inline_img_flushes_preceding_text() {

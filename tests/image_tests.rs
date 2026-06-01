@@ -1,4 +1,4 @@
-use vellum::image::load_image;
+use vellum::image::{load_image, ImageCache};
 
 #[test]
 fn test_load_png_succeeds() {
@@ -31,4 +31,20 @@ fn test_load_svg_via_load_image() {
     let img = load_image(path).expect("SVG should load via load_image");
     assert_eq!(img.width(), 8);
     assert_eq!(img.height(), 8);
+}
+
+#[test]
+fn test_no_remote_images_env_blocks_fetch() {
+    // VELLUM_NO_REMOTE_IMAGES set → get_or_load must refuse http(s) URLs without
+    // making any network connection.
+    std::env::set_var("VELLUM_NO_REMOTE_IMAGES", "1");
+    let mut cache = ImageCache::default();
+    let result = cache.get_or_load("https://example.com/image.png");
+    std::env::remove_var("VELLUM_NO_REMOTE_IMAGES");
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("VELLUM_NO_REMOTE_IMAGES"),
+        "expected env-var name in error, got: {msg}"
+    );
 }

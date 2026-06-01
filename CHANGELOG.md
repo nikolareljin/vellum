@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `ureq` dependency for fetching remote images over HTTP/HTTPS
 - `src/image.rs` `load_image_url`: fetches and decodes images from URLs; SVG URLs rasterised via `resvg`; 10 s timeout; 20 MiB download cap; 50 MP pixel-count guard
 - `src/parser.rs` `html_attr` / `extract_img_tag`: safe HTML attribute extraction (no shell, no `eval`)
+- `VELLUM_NO_REMOTE_IMAGES` environment variable: when set, remote image fetches are blocked without any network connection (opt-out for privacy/security-conscious users)
 
 ### Fixed
 - `<img src="…">` HTML tags in Markdown files are now rendered in the TUI; both block-level (`Event::Html`) and inline (`Event::InlineHtml`) variants are handled (closes #6)

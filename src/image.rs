@@ -79,6 +79,9 @@ impl ImageCache {
     pub fn get_or_load(&mut self, src: &str) -> Result<&DynamicImage> {
         if !self.cache.contains_key(src) {
             let img = if src.starts_with("http://") || src.starts_with("https://") {
+                if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
+                    anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set): {src}");
+                }
                 load_image_url(src)?
             } else {
                 load_image(src)?

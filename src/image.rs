@@ -53,20 +53,21 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
             MAX_REMOTE_BYTES / 1_048_576
         );
     }
-    // Guard against decompression-bomb images: probe dimensions before
-    // allocating the full decoded buffer.
-    if let Ok(sz) = imagesize::blob_size(&buf) {
-        let pixels = (sz.width as u64).saturating_mul(sz.height as u64);
-        if pixels > MAX_REMOTE_PIXELS {
-            anyhow::bail!(
-                "remote image dimensions too large ({} × {} px)",
-                sz.width,
-                sz.height
-            );
-        }
-    }
+    // SVG has no raster dimensions; handle it before the pixel guard.
     if svg::is_svg_path(safe_url) {
         return svg::rasterize(&buf);
+    }
+    // Guard against decompression-bomb images. Fail closed: if imagesize
+    // cannot probe the format, reject rather than decode blindly.
+    let sz = imagesize::blob_size(&buf)
+        .map_err(|_| anyhow::anyhow!("remote image: cannot verify dimensions for {safe_url}"))?;
+    let pixels = (sz.width as u64).saturating_mul(sz.height as u64);
+    if pixels > MAX_REMOTE_PIXELS {
+        anyhow::bail!(
+            "remote image dimensions too large ({} × {} px)",
+            sz.width,
+            sz.height
+        );
     }
     Ok(image::load_from_memory(&buf)?)
 }

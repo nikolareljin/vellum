@@ -431,11 +431,24 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
         // responsive; local files are read synchronously (fast disk I/O).
         {
             let lookahead = app.viewport_height.max(1) + 5;
+            // Use a row-budget rather than an entry count: an Image entry
+            // consumes `height` rows, so taking by entry count can
+            // synchronously load far more images than fit on screen.
+            let mut rows_seen = 0usize;
             let to_schedule: Vec<(String, bool)> = app
                 .lines
                 .iter()
                 .skip(app.scroll)
-                .take(lookahead)
+                .take_while(|dl| {
+                    if rows_seen >= lookahead {
+                        return false;
+                    }
+                    rows_seen += match dl {
+                        DisplayLine::Image { height, .. } => *height as usize,
+                        DisplayLine::Text(_) => 1,
+                    };
+                    true
+                })
                 .filter_map(|dl| match dl {
                     DisplayLine::Image { src, .. }
                         if !app.image_states.contains_key(src)

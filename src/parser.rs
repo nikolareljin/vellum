@@ -134,15 +134,27 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
     let lower = html.to_ascii_lowercase();
     let bytes = lower.as_bytes();
 
-    // Find an `<img` whose next byte is a valid tag-name terminator.
+    // Scan for a valid `<img` tag, skipping HTML comment blocks so that
+    // `<!-- <img src="…"> -->` does not produce a spurious image element.
     let img_start = {
         let mut search = 0;
         loop {
-            let rel = lower[search..].find("<img")?;
+            let rel = lower[search..].find('<')?;
             let pos = search + rel;
-            match bytes.get(pos + 4).copied() {
-                None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break pos,
-                _ => search = pos + 1,
+            if lower[pos..].starts_with("<!--") {
+                // Skip to the end of the comment.
+                let after_open = pos + 4;
+                match lower[after_open..].find("-->") {
+                    Some(end_rel) => search = after_open + end_rel + 3,
+                    None => return None, // unterminated comment
+                }
+            } else if lower[pos..].starts_with("<img") {
+                match bytes.get(pos + 4).copied() {
+                    None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break pos,
+                    _ => search = pos + 1, // e.g. <imgur
+                }
+            } else {
+                search = pos + 1;
             }
         }
     };
@@ -604,6 +616,17 @@ mod tests {
     fn extract_img_tag_non_img_html_returns_none() {
         assert!(extract_img_tag("<div>hello</div>").is_none());
         assert!(extract_img_tag("<!-- comment -->").is_none());
+    }
+
+    #[test]
+    fn extract_img_tag_img_inside_comment_ignored() {
+        // <img> entirely within a comment must not produce an element.
+        assert!(extract_img_tag(r#"<!-- <img src="hidden.png"> -->"#).is_none());
+        // Comment before a real img: only the real one should match.
+        assert_eq!(
+            extract_img_tag(r#"<!-- skip --> <img src="visible.png">"#),
+            Some(("".into(), "visible.png".into()))
+        );
     }
 
     #[test]

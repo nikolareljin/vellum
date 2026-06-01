@@ -549,7 +549,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     f.render_stateful_widget(widget, img_rect, state);
                                 }
                             }
-                            y_offset += height;
+                            y_offset += *height;
                         } else if app.pending_fetches.contains(src) {
                             f.render_widget(
                                 Paragraph::new(Line::from(Span::styled(
@@ -563,7 +563,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     height: 1,
                                 },
                             );
-                            y_offset += height;
+                            y_offset += *height;
                         } else if app.failed_images.contains(src) {
                             // Show a visible placeholder so failures aren't
                             // silent blank gaps, while still consuming the
@@ -597,10 +597,10 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     height: 1,
                                 },
                             );
-                            y_offset += height;
+                            y_offset += *height;
                         } else {
                             // Not yet loaded (first frame before prefetch runs)
-                            y_offset += height;
+                            y_offset += *height;
                         }
                     }
                 }

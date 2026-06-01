@@ -22,6 +22,8 @@ pub fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage> {
 
 /// Maximum bytes accepted from a remote image response (20 MiB).
 const MAX_REMOTE_BYTES: u64 = 20 * 1024 * 1024;
+/// Maximum pixel count before decode is rejected (~50 MP, ~200 MiB at 32bpp).
+const MAX_REMOTE_PIXELS: u64 = 50_000_000;
 
 /// Fetch and decode a remote image over HTTP or HTTPS.
 pub fn load_image_url(url: &str) -> Result<DynamicImage> {
@@ -30,7 +32,7 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     }
     let mut buf = Vec::new();
     ureq::get(url)
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(10))
         .call()
         .map_err(|e| anyhow::anyhow!("fetch {url}: {e}"))?
         .into_reader()
@@ -41,6 +43,18 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
             "remote image too large (>{} MiB)",
             MAX_REMOTE_BYTES / 1_048_576
         );
+    }
+    // Guard against decompression-bomb images: probe dimensions before
+    // allocating the full decoded buffer.
+    if let Ok(sz) = imagesize::blob_size(&buf) {
+        let pixels = sz.width as u64 * sz.height as u64;
+        if pixels > MAX_REMOTE_PIXELS {
+            anyhow::bail!(
+                "remote image dimensions too large ({} × {} px)",
+                sz.width,
+                sz.height
+            );
+        }
     }
     // Strip query string and fragment before SVG extension check so that
     // URLs like `.../logo.svg?raw=1` are correctly rasterised.

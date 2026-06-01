@@ -46,6 +46,11 @@ tempfile = "3"
 # HTTP client for fetching remote images
 ureq = "2"
 
+# Fast image dimension probe — used to reject decompression-bomb images
+# before full decode.  Already a transitive dep via ratatui-image; adding
+# directly for an explicit version pin.
+imagesize = "0.14"
+
 [dev-dependencies]
 pretty_assertions = "1"
 

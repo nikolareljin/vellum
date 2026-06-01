@@ -3231,6 +3231,7 @@ dependencies = [
  "clap",
  "crossterm 0.28.1",
  "image",
+ "imagesize",
  "pretty_assertions",
  "pulldown-cmark",
  "ratatui",

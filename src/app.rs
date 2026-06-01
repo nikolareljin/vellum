@@ -395,6 +395,39 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // Labeled loop: break with NavAction to signal what to do next.
     // Terminal is cleaned up AFTER the loop.
     let action: NavAction = 'main: loop {
+        // Prefetch images that are about to be visible — outside the draw
+        // closure so blocking I/O (especially remote fetches) does not freeze
+        // the ratatui backend or drop input events.
+        {
+            let lookahead = app.viewport_height.max(1) + 5;
+            let to_load: Vec<String> = app
+                .lines
+                .iter()
+                .skip(app.scroll)
+                .take(lookahead)
+                .filter_map(|dl| match dl {
+                    DisplayLine::Image { src, .. }
+                        if !app.image_states.contains_key(src)
+                            && !app.failed_images.contains(src) =>
+                    {
+                        Some(src.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            for src in to_load {
+                match app.image_cache.get_or_load(&src) {
+                    Ok(img) => {
+                        let state = app.picker.new_resize_protocol(img.clone());
+                        app.image_states.insert(src, state);
+                    }
+                    Err(_) => {
+                        app.failed_images.insert(src);
+                    }
+                }
+            }
+        }
+
         terminal.draw(|f| {
             let area = f.area();
             let chunks = Layout::default()
@@ -437,23 +470,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         y_offset += 1;
                     }
                     DisplayLine::Image { src, height } => {
-                        // Load image state on first encounter; record failures so
-                        // the render loop does not retry a broken URL every tick.
-                        if !app.image_states.contains_key(src)
-                            && !app.failed_images.contains(src)
-                        {
-                            match app.image_cache.get_or_load(src) {
-                                Ok(dyn_img) => {
-                                    let state =
-                                        app.picker.new_resize_protocol(dyn_img.clone());
-                                    app.image_states.insert(src.clone(), state);
-                                }
-                                Err(_) => {
-                                    app.failed_images.insert(src.clone());
-                                }
-                            }
-                        }
-
+                        // Images are loaded in the prefetch phase before this
+                        // draw call; this closure is pure render only.
                         if app.image_states.contains_key(src) {
                             let img_rect = Rect {
                                 x: content_area.x,
@@ -468,10 +486,26 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                 }
                             }
                             y_offset += height;
+                        } else if app.failed_images.contains(src) {
+                            // Show a visible placeholder so failures aren't
+                            // silent blank gaps, while still consuming the
+                            // reserved height to keep scroll math consistent.
+                            let label = if src.len() > 60 { &src[..60] } else { src.as_str() };
+                            f.render_widget(
+                                Paragraph::new(Line::from(Span::styled(
+                                    format!(" [image unavailable: {label}]"),
+                                    Style::default().fg(Color::DarkGray),
+                                ))),
+                                Rect {
+                                    x: content_area.x,
+                                    y: content_area.y + y_offset,
+                                    width: content_area.width,
+                                    height: 1,
+                                },
+                            );
+                            y_offset += height;
                         } else {
-                            // Image failed to load — advance by the full height so
-                            // scroll math (max_scroll, viewport_row_to_entry) stays
-                            // consistent with the DisplayLine::Image entry size.
+                            // Not yet loaded (first frame before prefetch runs)
                             y_offset += height;
                         }
                     }

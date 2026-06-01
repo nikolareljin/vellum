@@ -403,6 +403,12 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
 
     let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
 
+    // Prime viewport_height before the first iteration so the initial image
+    // prefetch covers the full visible area rather than the default of 0.
+    if let Ok(size) = terminal.size() {
+        app.viewport_height = size.height.saturating_sub(1) as usize;
+    }
+
     // Labeled loop: break with NavAction to signal what to do next.
     // Terminal is cleaned up AFTER the loop.
     let action: NavAction = 'main: loop {
@@ -443,8 +449,16 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                 })
                 .collect();
 
+            // Limit concurrent remote fetches to avoid spawning a thread storm
+            // when a document contains many remote images.
+            const MAX_CONCURRENT_FETCHES: usize = 4;
+
             for (src, remote) in to_schedule {
                 if remote {
+                    if app.pending_fetches.len() >= MAX_CONCURRENT_FETCHES {
+                        // Cap reached; this URL will be retried next tick.
+                        continue;
+                    }
                     app.pending_fetches.insert(src.clone());
                     let tx = app.fetch_tx.clone();
                     std::thread::spawn(move || {

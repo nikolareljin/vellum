@@ -113,14 +113,46 @@ fn html_attr(html: &str, attr: &str) -> Option<String> {
 /// Attribute extraction is scoped to just the `<img … >` tag so that other
 /// tags earlier in the snippet (e.g. `<div src="…">`) cannot shadow the
 /// image's real `src`.
+///
+/// Two correctness invariants:
+/// - The byte after `<img` must be ASCII whitespace, `/`, or `>` so that
+///   `<imgur>` and similar names are not mistaken for `<img>`.
+/// - The closing `>` is found by scanning while skipping over quoted attribute
+///   values, so `alt="a > b"` does not terminate the tag prematurely.
 fn extract_img_tag(html: &str) -> Option<(String, String)> {
     let lower = html.to_ascii_lowercase();
-    let img_start = lower.find("<img")?;
-    // Narrow to the tag itself so html_attr cannot wander into surrounding markup.
-    let tag_end = lower[img_start..]
-        .find('>')
-        .map(|p| img_start + p + 1)
-        .unwrap_or(html.len());
+    let bytes = lower.as_bytes();
+
+    // Find an `<img` whose next byte is a valid tag-name terminator.
+    let img_start = {
+        let mut search = 0;
+        loop {
+            let rel = lower[search..].find("<img")?;
+            let pos = search + rel;
+            match bytes.get(pos + 4).copied() {
+                None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break pos,
+                _ => search = pos + 1,
+            }
+        }
+    };
+
+    // Scan for the closing `>`, skipping over quoted attribute values so that
+    // `alt="a > b"` does not truncate the tag at the inner `>`.
+    let tag_end = {
+        let mut i = img_start + 4; // start after "<img"
+        let mut in_quote: Option<u8> = None;
+        loop {
+            match (bytes.get(i).copied(), in_quote) {
+                (None, _) => break html.len(),
+                (Some(b'>'), None) => break i + 1,
+                (Some(q @ (b'"' | b'\'')), None) => in_quote = Some(q),
+                (Some(q), Some(iq)) if q == iq => in_quote = None,
+                _ => {}
+            }
+            i += 1;
+        }
+    };
+
     let img_tag = &html[img_start..tag_end];
     let src = html_attr(img_tag, "src")?;
     let alt = html_attr(img_tag, "alt").unwrap_or_default();
@@ -546,6 +578,22 @@ mod tests {
     fn extract_img_tag_non_img_html_returns_none() {
         assert!(extract_img_tag("<div>hello</div>").is_none());
         assert!(extract_img_tag("<!-- comment -->").is_none());
+    }
+
+    #[test]
+    fn extract_img_tag_no_false_positive_on_imgur() {
+        // <imgur> must not match the <img> detector
+        assert!(extract_img_tag(r#"<imgur src="https://i.imgur.com/x.png">"#).is_none());
+    }
+
+    #[test]
+    fn extract_img_tag_gt_in_quoted_attribute() {
+        // '>' inside a quoted value must not truncate the tag prematurely
+        let html = r#"<img alt="a > b" src="https://example.com/x.png" />"#;
+        assert_eq!(
+            extract_img_tag(html),
+            Some(("a > b".into(), "https://example.com/x.png".into()))
+        );
     }
 
     #[test]

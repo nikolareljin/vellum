@@ -50,7 +50,7 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     // Guard against decompression-bomb images: probe dimensions before
     // allocating the full decoded buffer.
     if let Ok(sz) = imagesize::blob_size(&buf) {
-        let pixels = (sz.width as u64).checked_mul(sz.height as u64).unwrap_or(u64::MAX);
+        let pixels = (sz.width as u64).saturating_mul(sz.height as u64);
         if pixels > MAX_REMOTE_PIXELS {
             anyhow::bail!(
                 "remote image dimensions too large ({} × {} px)",

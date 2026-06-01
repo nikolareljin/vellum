@@ -567,11 +567,16 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                 .nth(60)
                                 .map(|(i, _)| i)
                                 .unwrap_or(safe_src.len())];
+                            let dim = Style::default().fg(Color::DarkGray);
                             f.render_widget(
-                                Paragraph::new(Line::from(Span::styled(
-                                    format!(" [image unavailable: {label}]"),
-                                    Style::default().fg(Color::DarkGray),
-                                ))),
+                                Paragraph::new(
+                                    Line::from(vec![
+                                        Span::raw(" [image unavailable: "),
+                                        Span::raw(label),
+                                        Span::raw("]"),
+                                    ])
+                                    .style(dim),
+                                ),
                                 Rect {
                                     x: content_area.x,
                                     y: content_area.y + y_offset,

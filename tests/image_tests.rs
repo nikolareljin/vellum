@@ -56,7 +56,7 @@ fn test_load_svg_via_load_image() {
 fn test_no_remote_images_env_blocks_fetch() {
     // VELLUM_NO_REMOTE_IMAGES set → get_or_load must refuse http(s) URLs without
     // making any network connection.
-    let _lock = ENV_MUTEX.lock().unwrap();
+    let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = EnvRestore {
         key: "VELLUM_NO_REMOTE_IMAGES",
         prev: std::env::var_os("VELLUM_NO_REMOTE_IMAGES"),

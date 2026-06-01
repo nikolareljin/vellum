@@ -314,16 +314,25 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                                 }
                                 i += 1;
                             }
-                            // Flush any preceding text spans so surrounding text
-                            // (e.g. "hello ![x](u) world") appears in document
-                            // order: Paragraph("hello ") → Image → Paragraph(" world").
-                            if !spans.is_empty() {
-                                elements.push(Element::Paragraph(std::mem::take(&mut spans)));
-                            }
-                            if is_video_src(&src) {
-                                elements.push(Element::Video { src });
+                            if link_href.is_some() {
+                                // Image nested inside a link (e.g. [![alt](img)](url)):
+                                // use the alt text as the link label so the link is
+                                // navigable in the TUI.
+                                link_text
+                                    .push_str(if alt.is_empty() { "[image]" } else { &alt });
                             } else {
-                                elements.push(Element::Image { alt, src });
+                                // Flush any preceding text spans so surrounding text
+                                // (e.g. "hello ![x](u) world") appears in document
+                                // order: Paragraph("hello ") → Image → Paragraph(" world").
+                                if !spans.is_empty() {
+                                    elements
+                                        .push(Element::Paragraph(std::mem::take(&mut spans)));
+                                }
+                                if is_video_src(&src) {
+                                    elements.push(Element::Video { src });
+                                } else {
+                                    elements.push(Element::Image { alt, src });
+                                }
                             }
                         }
                         // Inline HTML — pick out <img> tags.
@@ -331,15 +340,22 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                         // appears before the image in document order.
                         Event::InlineHtml(html) => {
                             if let Some((alt, src)) = extract_img_tag(html) {
-                                if !spans.is_empty() {
-                                    elements.push(Element::Paragraph(
-                                        std::mem::take(&mut spans),
-                                    ));
-                                }
-                                if is_video_src(&src) {
-                                    elements.push(Element::Video { src });
+                                if link_href.is_some() {
+                                    // <img> inside a link: use alt as the link label.
+                                    link_text.push_str(
+                                        if alt.is_empty() { "[image]" } else { &alt },
+                                    );
                                 } else {
-                                    elements.push(Element::Image { alt, src });
+                                    if !spans.is_empty() {
+                                        elements.push(Element::Paragraph(
+                                            std::mem::take(&mut spans),
+                                        ));
+                                    }
+                                    if is_video_src(&src) {
+                                        elements.push(Element::Video { src });
+                                    } else {
+                                        elements.push(Element::Image { alt, src });
+                                    }
                                 }
                             }
                         }
@@ -764,6 +780,35 @@ mod tests {
         assert_eq!(
             elements[2],
             Element::Paragraph(vec![Span::Text(" world".into())])
+        );
+    }
+
+    #[test]
+    fn parse_linked_image_uses_alt_as_link_text() {
+        // [![alt](img.png)](https://example.com) — image nested in a link.
+        // The link must be navigable; alt text becomes the link label.
+        let md = "[![Alt text](https://example.com/img.png)](https://example.com)\n";
+        let elements = parse(md);
+        assert_eq!(
+            elements,
+            vec![Element::Paragraph(vec![Span::Link {
+                text: "Alt text".into(),
+                href: "https://example.com".into(),
+            }])]
+        );
+    }
+
+    #[test]
+    fn parse_linked_image_empty_alt_uses_placeholder() {
+        // [![](img.png)](https://example.com) — empty alt → placeholder label.
+        let md = "[![](https://example.com/img.png)](https://example.com)\n";
+        let elements = parse(md);
+        assert_eq!(
+            elements,
+            vec![Element::Paragraph(vec![Span::Link {
+                text: "[image]".into(),
+                href: "https://example.com".into(),
+            }])]
         );
     }
 }

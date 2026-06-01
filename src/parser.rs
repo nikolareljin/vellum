@@ -73,38 +73,49 @@ fn html_attr(html: &str, attr: &str) -> Option<String> {
     let html_lc = html.to_ascii_lowercase();
     let attr_lc = attr.to_ascii_lowercase();
     let bytes = html_lc.as_bytes();
+    let attr_bytes = attr_lc.as_bytes();
 
     let mut i = 0;
-    while i + attr_lc.len() <= bytes.len() {
-        let rel = html_lc[i..].find(&attr_lc)?;
-        let pos = i + rel;
+    let mut in_quote: Option<u8> = None;
 
-        let boundary = pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\n' | b'\r');
-
-        if boundary {
-            let mut j = pos + attr_lc.len();
-            // Skip optional whitespace before '='
-            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b'=' {
-                j += 1;
-                // Skip optional whitespace after '='
-                while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
-                    j += 1;
-                }
-                if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
-                    let quote = bytes[j] as char;
-                    // Use original html (not html_lc) to preserve value casing
-                    let val_rest = &html[j + 1..];
-                    if let Some(end) = val_rest.find(quote) {
-                        return Some(val_rest[..end].to_owned());
+    while i < bytes.len() {
+        let b = bytes[i];
+        match in_quote {
+            Some(q) if b == q => in_quote = None,
+            Some(_) => {}
+            None if matches!(b, b'"' | b'\'') => in_quote = Some(b),
+            None => {
+                // Only match attribute names at a whitespace word-boundary and
+                // outside any quoted attribute value.
+                let at_boundary = i == 0 || matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r');
+                if at_boundary
+                    && i + attr_bytes.len() <= bytes.len()
+                    && bytes[i..i + attr_bytes.len()] == *attr_bytes
+                {
+                    let mut j = i + attr_bytes.len();
+                    // Skip optional whitespace before '='
+                    while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
+                        j += 1;
+                    }
+                    if j < bytes.len() && bytes[j] == b'=' {
+                        j += 1;
+                        // Skip optional whitespace after '='
+                        while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
+                            j += 1;
+                        }
+                        if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
+                            let quote = bytes[j] as char;
+                            // Use original html (not html_lc) to preserve value casing
+                            let val_rest = &html[j + 1..];
+                            if let Some(end) = val_rest.find(quote) {
+                                return Some(val_rest[..end].to_owned());
+                            }
+                        }
                     }
                 }
             }
         }
-
-        i = pos + 1;
+        i += 1;
     }
     None
 }
@@ -553,6 +564,17 @@ mod tests {
             html_attr(html, "data-src").as_deref(),
             Some("https://cdn.example.com/x.png")
         );
+    }
+
+    #[test]
+    fn html_attr_no_false_positive_in_quoted_value() {
+        // src="…" embedded inside another attribute's value must not match
+        let html = r#"<img title='src="fake.png"' src="real.png" />"#;
+        assert_eq!(html_attr(html, "src").as_deref(), Some("real.png"));
+
+        // same with double-outer, single-inner
+        let html2 = r#"<img title="has src='x.png' here" src="actual.png" />"#;
+        assert_eq!(html_attr(html2, "src").as_deref(), Some("actual.png"));
     }
 
     // ── extract_img_tag ───────────────────────────────────────────────────────

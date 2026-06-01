@@ -4,6 +4,21 @@ use vellum::image::{load_image, ImageCache};
 // Serialize tests that mutate VELLUM_NO_REMOTE_IMAGES so they don't race.
 static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
+/// RAII guard: restores `key` to `prev` on drop, even if the test panics.
+struct EnvRestore {
+    key: &'static str,
+    prev: Option<std::ffi::OsString>,
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match self.prev.take() {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 #[test]
 fn test_load_png_succeeds() {
     let path = "/tmp/vellum_test.png";
@@ -41,15 +56,14 @@ fn test_load_svg_via_load_image() {
 fn test_no_remote_images_env_blocks_fetch() {
     // VELLUM_NO_REMOTE_IMAGES set → get_or_load must refuse http(s) URLs without
     // making any network connection.
-    let _guard = ENV_MUTEX.lock().unwrap();
-    let prev = std::env::var_os("VELLUM_NO_REMOTE_IMAGES");
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let _restore = EnvRestore {
+        key: "VELLUM_NO_REMOTE_IMAGES",
+        prev: std::env::var_os("VELLUM_NO_REMOTE_IMAGES"),
+    };
     std::env::set_var("VELLUM_NO_REMOTE_IMAGES", "1");
     let mut cache = ImageCache::default();
     let result = cache.get_or_load("https://example.com/image.png");
-    match prev {
-        Some(v) => std::env::set_var("VELLUM_NO_REMOTE_IMAGES", v),
-        None => std::env::remove_var("VELLUM_NO_REMOTE_IMAGES"),
-    }
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(

@@ -30,6 +30,9 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         anyhow::bail!("load_image_url: expected http:// or https:// URL, got: {url}");
     }
+    if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
+        anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set): {url}");
+    }
     let mut buf = Vec::new();
     ureq::get(url)
         .timeout(Duration::from_secs(10))
@@ -47,7 +50,7 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     // Guard against decompression-bomb images: probe dimensions before
     // allocating the full decoded buffer.
     if let Ok(sz) = imagesize::blob_size(&buf) {
-        let pixels = sz.width as u64 * sz.height as u64;
+        let pixels = (sz.width as u64).checked_mul(sz.height as u64).unwrap_or(u64::MAX);
         if pixels > MAX_REMOTE_PIXELS {
             anyhow::bail!(
                 "remote image dimensions too large ({} × {} px)",
@@ -79,9 +82,6 @@ impl ImageCache {
     pub fn get_or_load(&mut self, src: &str) -> Result<&DynamicImage> {
         if !self.cache.contains_key(src) {
             let img = if src.starts_with("http://") || src.starts_with("https://") {
-                if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
-                    anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set): {src}");
-                }
                 load_image_url(src)?
             } else {
                 load_image(src)?

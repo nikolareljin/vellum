@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::execute;
@@ -117,9 +118,15 @@ struct App {
     /// Maps each SearchResult.line_index (into text-only lines) back to the
     /// corresponding index in `self.lines` (which includes image entries).
     search_line_map: Vec<usize>,
-    /// Sources whose load already failed — skipped on subsequent redraws so a
-    /// slow/unreachable URL doesn't block the render loop every 100 ms.
+    /// Sources whose load already failed — skipped on subsequent redraws.
     failed_images: std::collections::HashSet<String>,
+    /// Remote URLs currently being fetched on background threads.
+    pending_fetches: std::collections::HashSet<String>,
+    /// Completed background fetches waiting to be integrated.
+    /// Each message is `(src, Ok(image) | Err(reason))`.
+    fetch_rx: mpsc::Receiver<(String, Result<image::DynamicImage, String>)>,
+    /// Cloned into each spawned fetch thread.
+    fetch_tx: mpsc::Sender<(String, Result<image::DynamicImage, String>)>,
 }
 
 impl App {
@@ -130,6 +137,7 @@ impl App {
         anchor_map: std::collections::HashMap<String, usize>,
         thumb_files: Vec<tempfile::NamedTempFile>,
     ) -> Self {
+        let (fetch_tx, fetch_rx) = mpsc::channel();
         App {
             lines,
             scroll: 0,
@@ -147,6 +155,9 @@ impl App {
             search_cursor: 0,
             search_line_map: Vec::new(),
             failed_images: Default::default(),
+            pending_fetches: Default::default(),
+            fetch_tx,
+            fetch_rx,
         }
     }
 
@@ -395,12 +406,26 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // Labeled loop: break with NavAction to signal what to do next.
     // Terminal is cleaned up AFTER the loop.
     let action: NavAction = 'main: loop {
-        // Prefetch images that are about to be visible — outside the draw
-        // closure so blocking I/O (especially remote fetches) does not freeze
-        // the ratatui backend or drop input events.
+        // Integrate any completed background fetches.
+        while let Ok((src, result)) = app.fetch_rx.try_recv() {
+            app.pending_fetches.remove(&src);
+            match result {
+                Ok(img) => {
+                    let state = app.picker.new_resize_protocol(img);
+                    app.image_states.insert(src, state);
+                }
+                Err(_) => {
+                    app.failed_images.insert(src);
+                }
+            }
+        }
+
+        // Schedule images that are about to scroll into view.
+        // Remote URLs are fetched on background threads so the UI stays
+        // responsive; local files are read synchronously (fast disk I/O).
         {
             let lookahead = app.viewport_height.max(1) + 5;
-            let to_load: Vec<String> = app
+            let to_schedule: Vec<(String, bool)> = app
                 .lines
                 .iter()
                 .skip(app.scroll)
@@ -408,21 +433,33 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                 .filter_map(|dl| match dl {
                     DisplayLine::Image { src, .. }
                         if !app.image_states.contains_key(src)
-                            && !app.failed_images.contains(src) =>
+                            && !app.failed_images.contains(src)
+                            && !app.pending_fetches.contains(src) =>
                     {
-                        Some(src.clone())
+                        let remote = src.starts_with("http://") || src.starts_with("https://");
+                        Some((src.clone(), remote))
                     }
                     _ => None,
                 })
                 .collect();
-            for src in to_load {
-                match app.image_cache.get_or_load(&src) {
-                    Ok(img) => {
-                        let state = app.picker.new_resize_protocol(img.clone());
-                        app.image_states.insert(src, state);
-                    }
-                    Err(_) => {
-                        app.failed_images.insert(src);
+
+            for (src, remote) in to_schedule {
+                if remote {
+                    app.pending_fetches.insert(src.clone());
+                    let tx = app.fetch_tx.clone();
+                    std::thread::spawn(move || {
+                        let res = crate::image::load_image_url(&src).map_err(|e| e.to_string());
+                        let _ = tx.send((src, res));
+                    });
+                } else {
+                    match app.image_cache.get_or_load(&src) {
+                        Ok(img) => {
+                            let state = app.picker.new_resize_protocol(img.clone());
+                            app.image_states.insert(src, state);
+                        }
+                        Err(_) => {
+                            app.failed_images.insert(src);
+                        }
                     }
                 }
             }
@@ -485,6 +522,20 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     f.render_stateful_widget(widget, img_rect, state);
                                 }
                             }
+                            y_offset += height;
+                        } else if app.pending_fetches.contains(src) {
+                            f.render_widget(
+                                Paragraph::new(Line::from(Span::styled(
+                                    " [loading\u{2026}]",
+                                    Style::default().fg(Color::DarkGray),
+                                ))),
+                                Rect {
+                                    x: content_area.x,
+                                    y: content_area.y + y_offset,
+                                    width: content_area.width,
+                                    height: 1,
+                                },
+                            );
                             y_offset += height;
                         } else if app.failed_images.contains(src) {
                             // Show a visible placeholder so failures aren't

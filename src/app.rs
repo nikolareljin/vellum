@@ -550,6 +550,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             }
                             y_offset += *height;
                         } else if app.pending_fetches.contains(src) {
+                            let slot_h =
+                                (*height).min(content_area.height.saturating_sub(y_offset));
                             f.render_widget(
                                 Paragraph::new(Line::from(Span::styled(
                                     " [loading\u{2026}]",
@@ -559,7 +561,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     x: content_area.x,
                                     y: content_area.y + y_offset,
                                     width: content_area.width,
-                                    height: 1,
+                                    height: slot_h,
                                 },
                             );
                             y_offset += *height;
@@ -571,6 +573,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                 .map(|(i, _)| i)
                                 .unwrap_or(safe_src.len())];
                             let dim = Style::default().fg(Color::DarkGray);
+                            let slot_h =
+                                (*height).min(content_area.height.saturating_sub(y_offset));
                             f.render_widget(
                                 Paragraph::new(
                                     Line::from(vec![
@@ -584,13 +588,15 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     x: content_area.x,
                                     y: content_area.y + y_offset,
                                     width: content_area.width,
-                                    height: 1,
+                                    height: slot_h,
                                 },
                             );
                             y_offset += *height;
                         } else {
                             // Not yet scheduled (concurrency cap hit) or first frame.
                             // Show loading indicator so the gap is never silently blank.
+                            let slot_h =
+                                (*height).min(content_area.height.saturating_sub(y_offset));
                             f.render_widget(
                                 Paragraph::new(Line::from(Span::styled(
                                     " [loading\u{2026}]",
@@ -600,7 +606,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     x: content_area.x,
                                     y: content_area.y + y_offset,
                                     width: content_area.width,
-                                    height: 1,
+                                    height: slot_h,
                                 },
                             );
                             y_offset += *height;

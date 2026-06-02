@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use vellum::image::{load_image, ImageCache};
+use vellum::image::{is_remote_url, load_image, ImageCache};
 
 // Serialize tests that mutate VELLUM_NO_REMOTE_IMAGES so they don't race.
 static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -50,6 +50,20 @@ fn test_load_svg_via_load_image() {
     let img = load_image(path).expect("SVG should load via load_image");
     assert_eq!(img.width(), 8);
     assert_eq!(img.height(), 8);
+}
+
+#[test]
+fn test_is_remote_url() {
+    assert!(is_remote_url("http://example.com/img.png"));
+    assert!(is_remote_url("https://example.com/img.png"));
+    // RFC 3986 §3.1: schemes are case-insensitive
+    assert!(is_remote_url("HTTP://example.com/img.png"));
+    assert!(is_remote_url("HTTPS://example.com/img.png"));
+    assert!(is_remote_url("Http://example.com/img.png"));
+    assert!(!is_remote_url("/local/path/img.png"));
+    assert!(!is_remote_url("relative/img.png"));
+    assert!(!is_remote_url("ftp://example.com/img.png"));
+    assert!(!is_remote_url(""));
 }
 
 #[test]

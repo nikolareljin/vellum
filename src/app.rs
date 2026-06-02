@@ -19,7 +19,7 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
-use crate::image::ImageCache;
+use crate::image::{is_remote_url, ImageCache};
 use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
@@ -231,7 +231,7 @@ fn build_display_lines(
         match el {
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
-                let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
+                let is_remote = is_remote_url(&resolved);
                 // Create an Image slot for local readable files and remote URLs.
                 // Missing local files fall back to the styled text placeholder
                 // so they don't leave an invisible blank gap.
@@ -336,7 +336,7 @@ fn link_at_line(doc_links: &[(String, usize)], target_line: usize) -> Option<&st
 /// Returns `true` when `src` is a local path that exists and is a regular file.
 /// Remote URLs return `false`; callers that support remote fetching check separately.
 fn is_local_file_readable(src: &str) -> bool {
-    if src.starts_with("http://") || src.starts_with("https://") {
+    if is_remote_url(src) {
         return false;
     }
     std::path::Path::new(src).is_file()
@@ -345,11 +345,7 @@ fn is_local_file_readable(src: &str) -> bool {
 /// Returns `true` when `href` looks like a relative link to a Markdown file
 /// (not an anchor, not an HTTP URL, ends with `.md` or `.markdown`).
 fn is_local_md_link(href: &str) -> bool {
-    if href.starts_with('#')
-        || href.starts_with("http://")
-        || href.starts_with("https://")
-        || href.starts_with("mailto:")
-    {
+    if href.starts_with('#') || is_remote_url(href) || href.starts_with("mailto:") {
         return false;
     }
     let lower = href.to_lowercase();
@@ -359,7 +355,7 @@ fn is_local_md_link(href: &str) -> bool {
 /// Resolve an image/video `src` relative to the document's `base_dir`.
 /// Absolute paths and `http(s)://` URLs are returned unchanged.
 fn resolve_path(src: &str, base_dir: &Path) -> String {
-    if src.starts_with("http://") || src.starts_with("https://") {
+    if is_remote_url(src) {
         return src.to_owned();
     }
     let p = Path::new(src);
@@ -455,7 +451,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             && !app.failed_images.contains(src)
                             && !app.pending_fetches.contains(src) =>
                     {
-                        let remote = src.starts_with("http://") || src.starts_with("https://");
+                        let remote = is_remote_url(src);
                         Some((src.clone(), remote))
                     }
                     _ => None,

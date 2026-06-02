@@ -25,9 +25,20 @@ const MAX_REMOTE_BYTES: u64 = 20 * 1024 * 1024;
 /// Maximum pixel count before decode is rejected (~50 MP, ~200 MiB at 32bpp).
 const MAX_REMOTE_PIXELS: u64 = 50_000_000;
 
+/// Returns `true` for `http://` and `https://` URLs, case-insensitively.
+/// URI schemes are case-insensitive per RFC 3986 §3.1.
+pub fn is_remote_url(s: &str) -> bool {
+    // Only lowercase the scheme prefix to avoid a full-string allocation.
+    let prefix = s
+        .get(..8)
+        .map(|p| p.to_ascii_lowercase())
+        .unwrap_or_default();
+    prefix.starts_with("http://") || prefix.starts_with("https://")
+}
+
 /// Fetch and decode a remote image over HTTP or HTTPS.
 pub fn load_image_url(url: &str) -> Result<DynamicImage> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !is_remote_url(url) {
         anyhow::bail!("load_image_url: expected http:// or https:// URL, got: {url}");
     }
     if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
@@ -81,7 +92,7 @@ pub struct ImageCache {
 impl ImageCache {
     pub fn get_or_load(&mut self, src: &str) -> Result<&DynamicImage> {
         if !self.cache.contains_key(src) {
-            let img = if src.starts_with("http://") || src.starts_with("https://") {
+            let img = if is_remote_url(src) {
                 load_image_url(src)?
             } else {
                 load_image(src)?

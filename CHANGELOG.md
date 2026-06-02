@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - `ureq` dependency for fetching remote images over HTTP/HTTPS
 - `src/image.rs` `load_image_url`: fetches and decodes images from URLs; SVG URLs rasterised via `resvg`; 10 s timeout; 20 MiB download cap; 50 MP pixel-count guard
+- `src/image.rs` `is_remote_url`: case-insensitive URI scheme check (`http://`/`https://`) per RFC 3986 §3.1
 - `src/parser.rs` `html_attr` / `extract_img_tag`: safe HTML attribute extraction (no shell, no `eval`)
 - `VELLUM_NO_REMOTE_IMAGES` environment variable: when set, remote image fetches are blocked without any network connection (opt-out for privacy/security-conscious users)
 

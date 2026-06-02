@@ -134,27 +134,47 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
     let lower = html.to_ascii_lowercase();
     let bytes = lower.as_bytes();
 
-    // Scan for a valid `<img` tag, skipping HTML comment blocks so that
-    // `<!-- <img src="…"> -->` does not produce a spurious image element.
+    // Scan for a valid `<img` tag, skipping:
+    //   • HTML comment blocks (`<!-- … -->`)
+    //   • other tags entirely — while tracking their quoted attribute values —
+    //     so `<div title="<img src='…'>">` does not produce a false positive.
     let img_start = {
-        let mut search = 0;
+        let mut i = 0;
         loop {
-            let rel = lower[search..].find('<')?;
-            let pos = search + rel;
-            if lower[pos..].starts_with("<!--") {
-                // Skip to the end of the comment.
-                let after_open = pos + 4;
+            if i >= bytes.len() {
+                return None;
+            }
+            // HTML comment: skip the whole block.
+            if lower[i..].starts_with("<!--") {
+                let after_open = i + 4;
                 match lower[after_open..].find("-->") {
-                    Some(end_rel) => search = after_open + end_rel + 3,
+                    Some(end_rel) => { i = after_open + end_rel + 3; continue; }
                     None => return None, // unterminated comment
                 }
-            } else if lower[pos..].starts_with("<img") {
-                match bytes.get(pos + 4).copied() {
-                    None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break pos,
-                    _ => search = pos + 1, // e.g. <imgur
+            }
+            if bytes[i] != b'<' {
+                i += 1;
+                continue;
+            }
+            // We're at a `<`.
+            if lower[i..].starts_with("<img") {
+                match bytes.get(i + 4).copied() {
+                    None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break i,
+                    _ => { i += 1; continue; } // e.g. <imgur
                 }
-            } else {
-                search = pos + 1;
+            }
+            // Some other tag — scan past it while tracking quoted attribute
+            // values so that `title="<img src=…>"` cannot trigger a match.
+            i += 1;
+            let mut in_quote: Option<u8> = None;
+            while i < bytes.len() {
+                match (bytes[i], in_quote) {
+                    (q @ (b'"' | b'\''), None) => in_quote = Some(q),
+                    (q, Some(iq)) if q == iq => in_quote = None,
+                    (b'>', None) => { i += 1; break; }
+                    _ => {}
+                }
+                i += 1;
             }
         }
     };
@@ -664,6 +684,19 @@ mod tests {
     #[test]
     fn extract_img_tag_no_src_returns_none() {
         assert!(extract_img_tag(r#"<img alt="no-src" />"#).is_none());
+    }
+
+    #[test]
+    fn extract_img_tag_img_inside_quoted_attr_not_matched() {
+        // `<img` inside a quoted attribute value of another tag must not match.
+        let html = r#"<div title="<img src='https://trap.example.com/x.png'>"><img src="https://real.example.com/y.png" /></div>"#;
+        assert_eq!(
+            extract_img_tag(html),
+            Some(("".into(), "https://real.example.com/y.png".into()))
+        );
+        // No real img tag at all after the false-positive — should return None.
+        let html2 = r#"<div title="<img src='https://trap.example.com/x.png'>">text</div>"#;
+        assert!(extract_img_tag(html2).is_none());
     }
 
     #[test]

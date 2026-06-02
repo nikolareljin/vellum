@@ -148,7 +148,10 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
             if lower[i..].starts_with("<!--") {
                 let after_open = i + 4;
                 match lower[after_open..].find("-->") {
-                    Some(end_rel) => { i = after_open + end_rel + 3; continue; }
+                    Some(end_rel) => {
+                        i = after_open + end_rel + 3;
+                        continue;
+                    }
                     None => return None, // unterminated comment
                 }
             }
@@ -160,7 +163,11 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
             if lower[i..].starts_with("<img") {
                 match bytes.get(i + 4).copied() {
                     None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break i,
-                    _ => { i += 1; continue; } // e.g. <imgur
+                    // e.g. <imgur — not a valid <img opener
+                    _ => {
+                        i += 1;
+                        continue;
+                    }
                 }
             }
             // Some other tag — scan past it while tracking quoted attribute
@@ -171,7 +178,10 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
                 match (bytes[i], in_quote) {
                     (q @ (b'"' | b'\''), None) => in_quote = Some(q),
                     (q, Some(iq)) if q == iq => in_quote = None,
-                    (b'>', None) => { i += 1; break; }
+                    (b'>', None) => {
+                        i += 1;
+                        break;
+                    }
                     _ => {}
                 }
                 i += 1;

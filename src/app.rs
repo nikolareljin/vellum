@@ -389,9 +389,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // the available row count minus the status bar to avoid overflow.
     let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let min_h: u16 = 12;
-    let max_h: u16 = (term_cols / 2)
-        .min(term_rows.saturating_sub(2))
-        .max(min_h);
+    let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(min_h);
     let img_height: u16 = (term_cols / 4).clamp(min_h, max_h);
 
     let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme, img_height);

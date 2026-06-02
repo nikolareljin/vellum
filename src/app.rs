@@ -224,6 +224,7 @@ fn build_display_lines(
     elements: &[Element],
     base_dir: &Path,
     theme: &Theme,
+    img_height: u16,
 ) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
     let mut out = Vec::new();
     let mut thumb_files = Vec::new();
@@ -242,7 +243,7 @@ fn build_display_lines(
                 if remote_allowed || is_local_file_readable(&resolved) {
                     out.push(DisplayLine::Image {
                         src: resolved,
-                        height: 10,
+                        height: img_height,
                     });
                     out.push(DisplayLine::Text(Line::from("")));
                 } else {
@@ -260,7 +261,7 @@ fn build_display_lines(
                         let path = tmp.path().to_string_lossy().to_string();
                         out.push(DisplayLine::Image {
                             src: path,
-                            height: 10,
+                            height: img_height,
                         });
                         out.push(DisplayLine::Text(Line::from("")));
                         thumb_files.push(tmp);
@@ -374,7 +375,23 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
     let base_dir = file.parent().unwrap_or(Path::new("."));
-    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme);
+
+    // Query terminal dimensions before raw mode so build_display_lines can
+    // size image slots proportionally.  Falls back to 80×24 if unavailable.
+    //
+    // Target: images render at ≥ half the terminal width.  With a 2:1 cell
+    // pixel ratio (typical monospace: 8 px wide × 16 px tall), a slot of
+    // cols/4 rows makes the pixel rect square, so a 1:1 image fills exactly
+    // half the terminal width; landscape images (wider aspect) fill more.
+    //
+    // Bounds: min_h = 12 (always usable); max_h = half the viewport minus the
+    // status bar row (avoids a single image consuming the whole screen).
+    let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let min_h: u16 = 12;
+    let max_h: u16 = term_rows.saturating_sub(5).max(min_h);
+    let img_height: u16 = (term_cols / 4).clamp(min_h, max_h);
+
+    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme, img_height);
     let doc_links = collect_links(&elements);
     let anchor_map = build_anchor_map(&elements);
     let fname = file

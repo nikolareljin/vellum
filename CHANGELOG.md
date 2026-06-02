@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `VELLUM_NO_REMOTE_IMAGES` environment variable: when set, remote image fetches are blocked without any network connection (opt-out for privacy/security-conscious users)
 
 ### Changed
-- Image slot height is now proportional to the terminal width (`cols/4` rows, clamped to `[12, viewport_height/2]`) so images render at ≥ half the terminal width instead of the previous fixed 10-row slot
+- Image slot height is now proportional to the terminal width (`cols/4` rows, clamped to `[12, min(cols/2, rows-2)]`) so images render at ≥ half the terminal width instead of the previous fixed 10-row slot
 
 ### Fixed
 - `<img src="…">` HTML tags in Markdown files are now rendered in the TUI; both block-level (`Event::Html`) and inline (`Event::InlineHtml`) variants are handled (closes #6)

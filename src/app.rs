@@ -235,7 +235,7 @@ fn build_display_lines(
                 let resolved = resolve_path(src, base_dir);
                 let is_remote = is_remote_url(&resolved);
                 // Remote fetching is disabled: skip the Image slot so the
-                // layout doesn't reserve 10 blank rows per blocked URL.
+                // layout doesn't reserve a blank img_height-row gap per blocked URL.
                 let remote_allowed =
                     is_remote && std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_none();
                 // Create an Image slot for local readable files and allowed remote URLs.
@@ -384,9 +384,9 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // cols/4 rows makes the pixel rect square, so a 1:1 image fills exactly
     // half the terminal width; landscape images (wider aspect) fill more.
     //
-    // Bounds: min_h = 12 (always usable); max_h scales with terminal width
-    // (cols/2) so wider screens show proportionally taller images, capped at
-    // the available row count minus the status bar to avoid overflow.
+    // Bounds: min_h = 12 (always usable); max_h = min(cols/2, rows-2) so
+    // wider screens allow proportionally taller images while never exceeding
+    // the visible area (rows-2 leaves room for the status bar).
     let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let min_h: u16 = 12;
     let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(min_h);

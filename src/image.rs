@@ -1,7 +1,9 @@
 use anyhow::Result;
 use image::DynamicImage;
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::svg;
 
@@ -18,6 +20,88 @@ pub fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage> {
     Ok(img)
 }
 
+/// Maximum bytes accepted from a remote image response (20 MiB).
+const MAX_REMOTE_BYTES: u64 = 20 * 1024 * 1024;
+/// Maximum pixel count before decode is rejected (~50 MP, ~200 MiB at 32bpp).
+const MAX_REMOTE_PIXELS: u64 = 50_000_000;
+
+/// Returns `true` for `http://` and `https://` URLs, case-insensitively.
+/// URI schemes are case-insensitive per RFC 3986 §3.1.
+pub fn is_remote_url(s: &str) -> bool {
+    s.get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+        || s.get(..8)
+            .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+}
+
+/// Sanitise a URL for use in error messages / UI placeholders.
+/// Strips query string, fragment, and userinfo (user:pass@) to avoid
+/// leaking tokens or credentials.
+pub fn safe_error_url(url: &str) -> String {
+    // Strip query and fragment.
+    let no_query = url
+        .split('?')
+        .next()
+        .and_then(|s| s.split('#').next())
+        .unwrap_or(url);
+    // Strip userinfo from the authority component (user:pass@host → host).
+    if let Some(scheme_end) = no_query.find("://") {
+        let after_scheme = scheme_end + 3;
+        let rest = &no_query[after_scheme..];
+        if let Some(at_pos) = rest.find('@') {
+            if !rest[..at_pos].contains('/') {
+                return format!("{}{}", &no_query[..after_scheme], &rest[at_pos + 1..]);
+            }
+        }
+    }
+    no_query.to_owned()
+}
+
+/// Fetch and decode a remote image over HTTP or HTTPS.
+pub fn load_image_url(url: &str) -> Result<DynamicImage> {
+    if !is_remote_url(url) {
+        anyhow::bail!(
+            "load_image_url: expected http:// or https:// URL, got: {}",
+            safe_error_url(url)
+        );
+    }
+    if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
+        anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set)");
+    }
+    let safe_url = safe_error_url(url);
+    let mut buf = Vec::new();
+    ureq::get(url)
+        .timeout(Duration::from_secs(10))
+        .call()
+        .map_err(|e| anyhow::anyhow!("fetch {safe_url}: {e}"))?
+        .into_reader()
+        .take(MAX_REMOTE_BYTES + 1)
+        .read_to_end(&mut buf)?;
+    if buf.len() as u64 > MAX_REMOTE_BYTES {
+        anyhow::bail!(
+            "remote image too large (>{} MiB)",
+            MAX_REMOTE_BYTES / 1_048_576
+        );
+    }
+    // SVG has no raster dimensions; handle it before the pixel guard.
+    if svg::is_svg_path(&safe_url) {
+        return svg::rasterize(&buf);
+    }
+    // Guard against decompression-bomb images. Fail closed: if imagesize
+    // cannot probe the format, reject rather than decode blindly.
+    let sz = imagesize::blob_size(&buf)
+        .map_err(|_| anyhow::anyhow!("remote image: cannot verify dimensions for {safe_url}"))?;
+    let pixels = (sz.width as u64).saturating_mul(sz.height as u64);
+    if pixels > MAX_REMOTE_PIXELS {
+        anyhow::bail!(
+            "remote image dimensions too large ({} × {} px)",
+            sz.width,
+            sz.height
+        );
+    }
+    Ok(image::load_from_memory(&buf)?)
+}
+
 /// In-memory image cache: resolved src path → loaded [`DynamicImage`].
 #[derive(Default)]
 pub struct ImageCache {
@@ -27,10 +111,11 @@ pub struct ImageCache {
 impl ImageCache {
     pub fn get_or_load(&mut self, src: &str) -> Result<&DynamicImage> {
         if !self.cache.contains_key(src) {
-            if src.starts_with("http://") || src.starts_with("https://") {
-                anyhow::bail!("remote images not yet supported — use a local path");
-            }
-            let img = load_image(src)?;
+            let img = if is_remote_url(src) {
+                load_image_url(src)?
+            } else {
+                load_image(src)?
+            };
             self.cache.insert(src.to_owned(), img);
         }
         Ok(self.cache.get(src).unwrap())

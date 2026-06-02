@@ -1,6 +1,6 @@
 [package]
 name = "vellum"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Rich Markdown viewer for the terminal — renders text, images, code, and links in a full TUI"
 license = "MIT"
@@ -42,6 +42,14 @@ thiserror = "2"
 
 # Temporary files (video thumbnails)
 tempfile = "3"
+
+# HTTP client for fetching remote images
+ureq = "2"
+
+# Fast image dimension probe — used to reject decompression-bomb images
+# before full decode.  Already a transitive dep via ratatui-image; adding
+# directly for an explicit version pin.
+imagesize = "0.14"
 
 [dev-dependencies]
 pretty_assertions = "1"

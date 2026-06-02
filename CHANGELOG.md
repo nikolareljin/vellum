@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-05-31
+
+### Added
+- `ureq` dependency for fetching remote images over HTTP/HTTPS
+- `src/image.rs` `load_image_url`: fetches and decodes images from URLs; SVG URLs rasterised via `resvg`; 10 s timeout; 20 MiB download cap; 50 MP pixel-count guard
+- `src/image.rs` `is_remote_url`: case-insensitive URI scheme check (`http://`/`https://`) per RFC 3986 §3.1
+- `src/parser.rs` `html_attr` / `extract_img_tag`: safe HTML attribute extraction (no shell, no `eval`)
+- `VELLUM_NO_REMOTE_IMAGES` environment variable: when set, remote image fetches are blocked without any network connection (opt-out for privacy/security-conscious users)
+
+### Changed
+- Image slot height is now proportional to the terminal width (`cols/4` rows, clamped to `[12, min(cols/2, rows-2)]`) so images render at ≥ half the terminal width instead of the previous fixed 10-row slot
+
+### Fixed
+- `<img src="…">` HTML tags in Markdown files are now rendered in the TUI; both block-level (`Event::Html`) and inline (`Event::InlineHtml`) variants are handled (closes #6)
+
 ## [0.6.0] — 2026-05-27
 
 ### Added

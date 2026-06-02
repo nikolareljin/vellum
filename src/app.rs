@@ -1,5 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::execute;
@@ -18,7 +20,7 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
-use crate::image::ImageCache;
+use crate::image::{is_remote_url, safe_error_url, ImageCache};
 use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
@@ -117,6 +119,15 @@ struct App {
     /// Maps each SearchResult.line_index (into text-only lines) back to the
     /// corresponding index in `self.lines` (which includes image entries).
     search_line_map: Vec<usize>,
+    /// Sources whose load already failed — skipped on subsequent redraws.
+    failed_images: std::collections::HashSet<String>,
+    /// Remote URLs currently being fetched on background threads.
+    pending_fetches: std::collections::HashSet<String>,
+    /// Completed background fetches waiting to be integrated.
+    /// Each message is `(src, Ok(image) | Err(reason))`.
+    fetch_rx: mpsc::Receiver<(String, Result<image::DynamicImage, String>)>,
+    /// Cloned into each spawned fetch thread.
+    fetch_tx: mpsc::Sender<(String, Result<image::DynamicImage, String>)>,
 }
 
 impl App {
@@ -127,6 +138,7 @@ impl App {
         anchor_map: std::collections::HashMap<String, usize>,
         thumb_files: Vec<tempfile::NamedTempFile>,
     ) -> Self {
+        let (fetch_tx, fetch_rx) = mpsc::channel();
         App {
             lines,
             scroll: 0,
@@ -143,6 +155,10 @@ impl App {
             search_results: Vec::new(),
             search_cursor: 0,
             search_line_map: Vec::new(),
+            failed_images: Default::default(),
+            pending_fetches: Default::default(),
+            fetch_tx,
+            fetch_rx,
         }
     }
 
@@ -208,6 +224,7 @@ fn build_display_lines(
     elements: &[Element],
     base_dir: &Path,
     theme: &Theme,
+    img_height: u16,
 ) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
     let mut out = Vec::new();
     let mut thumb_files = Vec::new();
@@ -216,13 +233,17 @@ fn build_display_lines(
         match el {
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
-                // Only create an Image slot when the file is local and exists.
-                // Remote URLs and missing files fall back to the styled text
-                // placeholder so they don't leave an invisible blank gap.
-                if is_local_file_readable(&resolved) {
+                let is_remote = is_remote_url(&resolved);
+                // true only when fetching is enabled (VELLUM_NO_REMOTE_IMAGES unset);
+                // blocked remote URLs get no Image slot, avoiding a blank gap.
+                let remote_allowed =
+                    is_remote && std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_none();
+                // Create an Image slot for local readable files and allowed remote URLs.
+                // Missing/blocked sources fall back to the styled text placeholder.
+                if remote_allowed || is_local_file_readable(&resolved) {
                     out.push(DisplayLine::Image {
                         src: resolved,
-                        height: 10,
+                        height: img_height,
                     });
                     out.push(DisplayLine::Text(Line::from("")));
                 } else {
@@ -240,7 +261,7 @@ fn build_display_lines(
                         let path = tmp.path().to_string_lossy().to_string();
                         out.push(DisplayLine::Image {
                             src: path,
-                            height: 10,
+                            height: img_height,
                         });
                         out.push(DisplayLine::Text(Line::from("")));
                         thumb_files.push(tmp);
@@ -318,9 +339,9 @@ fn link_at_line(doc_links: &[(String, usize)], target_line: usize) -> Option<&st
 }
 
 /// Returns `true` when `src` is a local path that exists and is a regular file.
-/// Remote URLs are always `false`; they cannot be rendered inline.
+/// Remote URLs return `false`; callers that support remote fetching check separately.
 fn is_local_file_readable(src: &str) -> bool {
-    if src.starts_with("http://") || src.starts_with("https://") {
+    if is_remote_url(src) {
         return false;
     }
     std::path::Path::new(src).is_file()
@@ -329,11 +350,7 @@ fn is_local_file_readable(src: &str) -> bool {
 /// Returns `true` when `href` looks like a relative link to a Markdown file
 /// (not an anchor, not an HTTP URL, ends with `.md` or `.markdown`).
 fn is_local_md_link(href: &str) -> bool {
-    if href.starts_with('#')
-        || href.starts_with("http://")
-        || href.starts_with("https://")
-        || href.starts_with("mailto:")
-    {
+    if href.starts_with('#') || is_remote_url(href) || href.starts_with("mailto:") {
         return false;
     }
     let lower = href.to_lowercase();
@@ -343,7 +360,7 @@ fn is_local_md_link(href: &str) -> bool {
 /// Resolve an image/video `src` relative to the document's `base_dir`.
 /// Absolute paths and `http(s)://` URLs are returned unchanged.
 fn resolve_path(src: &str, base_dir: &Path) -> String {
-    if src.starts_with("http://") || src.starts_with("https://") {
+    if is_remote_url(src) {
         return src.to_owned();
     }
     let p = Path::new(src);
@@ -358,7 +375,25 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     let source = std::fs::read_to_string(file)?;
     let elements = parser::parse(&source);
     let base_dir = file.parent().unwrap_or(Path::new("."));
-    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme);
+
+    // Query terminal dimensions before raw mode so build_display_lines can
+    // size image slots proportionally.  Falls back to 80×24 if unavailable.
+    //
+    // Target: images render at ≥ half the terminal width.  With a 2:1 cell
+    // pixel ratio (typical monospace: 8 px wide × 16 px tall), a slot of
+    // cols/4 rows makes the pixel rect square, so a 1:1 image fills exactly
+    // half the terminal width; landscape images (wider aspect) fill more.
+    //
+    // Bounds: target = cols/4; max_h = min(cols/2, rows-2) so the slot never
+    // exceeds the visible area (rows-2 leaves room for the status bar).
+    // On very short terminals max_h can fall below min_h; clamp(min_h.min(max_h),
+    // max_h) degrades gracefully rather than panicking when min > max.
+    let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let min_h: u16 = 12;
+    let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(1);
+    let img_height: u16 = (term_cols / 4).clamp(min_h.min(max_h), max_h);
+
+    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme, img_height);
     let doc_links = collect_links(&elements);
     let anchor_map = build_anchor_map(&elements);
     let fname = file
@@ -387,9 +422,105 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
 
     let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
 
+    // Prime viewport_height before the first iteration so the initial image
+    // prefetch covers the full visible area rather than the default of 0.
+    if let Ok(size) = terminal.size() {
+        app.viewport_height = size.height.saturating_sub(1) as usize;
+    }
+
+    // Shared flag: set to true when this TUI session ends so in-flight fetch
+    // threads skip sending results to the already-dropped receiver.
+    let shutdown = Arc::new(AtomicBool::new(false));
+
     // Labeled loop: break with NavAction to signal what to do next.
     // Terminal is cleaned up AFTER the loop.
     let action: NavAction = 'main: loop {
+        // Integrate any completed background fetches.
+        while let Ok((src, result)) = app.fetch_rx.try_recv() {
+            app.pending_fetches.remove(&src);
+            match result {
+                Ok(img) => {
+                    let state = app.picker.new_resize_protocol(img);
+                    app.image_states.insert(src, state);
+                }
+                Err(_) => {
+                    app.failed_images.insert(src);
+                }
+            }
+        }
+
+        // Schedule images that are about to scroll into view.
+        // Remote URLs are fetched on background threads so the UI stays
+        // responsive; local files are read synchronously (fast disk I/O).
+        {
+            let lookahead = app.viewport_height.max(1) + 5;
+            // Use a row-budget rather than an entry count: an Image entry
+            // consumes `height` rows, so taking by entry count can
+            // synchronously load far more images than fit on screen.
+            let mut rows_seen = 0usize;
+            let to_schedule: Vec<(String, bool)> = app
+                .lines
+                .iter()
+                .skip(app.scroll)
+                .take_while(|dl| {
+                    if rows_seen >= lookahead {
+                        return false;
+                    }
+                    rows_seen += match dl {
+                        DisplayLine::Image { height, .. } => *height as usize,
+                        DisplayLine::Text(_) => 1,
+                    };
+                    true
+                })
+                .filter_map(|dl| match dl {
+                    DisplayLine::Image { src, .. }
+                        if !app.image_states.contains_key(src)
+                            && !app.failed_images.contains(src)
+                            && !app.pending_fetches.contains(src) =>
+                    {
+                        let remote = is_remote_url(src);
+                        Some((src.clone(), remote))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            // Limit concurrent remote fetches to avoid spawning a thread storm
+            // when a document contains many remote images.
+            const MAX_CONCURRENT_FETCHES: usize = 4;
+
+            for (src, remote) in to_schedule {
+                if remote {
+                    if app.pending_fetches.len() >= MAX_CONCURRENT_FETCHES {
+                        // Cap reached; this URL will be retried next tick.
+                        continue;
+                    }
+                    app.pending_fetches.insert(src.clone());
+                    let tx = app.fetch_tx.clone();
+                    let flag = Arc::clone(&shutdown);
+                    std::thread::spawn(move || {
+                        if flag.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        let res = crate::image::load_image_url(&src).map_err(|e| e.to_string());
+                        if !flag.load(Ordering::Relaxed) {
+                            let _ = tx.send((src, res));
+                        }
+                    });
+                } else {
+                    match app.image_cache.get_or_load(&src) {
+                        Ok(img) => {
+                            let state = app.picker.new_resize_protocol(img.clone());
+                            app.image_states.insert(src, state);
+                        }
+                        Err(_) => {
+                            app.failed_images.insert(src);
+                        }
+                    }
+                }
+            }
+        }
+
         terminal.draw(|f| {
             let area = f.area();
             let chunks = Layout::default()
@@ -432,14 +563,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         y_offset += 1;
                     }
                     DisplayLine::Image { src, height } => {
-                        // Load image state on first encounter
-                        if !app.image_states.contains_key(src) {
-                            if let Ok(dyn_img) = app.image_cache.get_or_load(src) {
-                                let state = app.picker.new_resize_protocol(dyn_img.clone());
-                                app.image_states.insert(src.clone(), state);
-                            }
-                        }
-
+                        // Images are loaded in the prefetch phase before this
+                        // draw call; this closure is pure render only.
                         if app.image_states.contains_key(src) {
                             let img_rect = Rect {
                                 x: content_area.x,
@@ -453,9 +578,68 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                     f.render_stateful_widget(widget, img_rect, state);
                                 }
                             }
-                            y_offset += height;
+                            y_offset += *height;
+                        } else if app.pending_fetches.contains(src) {
+                            let slot_h =
+                                (*height).min(content_area.height.saturating_sub(y_offset));
+                            f.render_widget(
+                                Paragraph::new(Line::from(Span::styled(
+                                    " [loading\u{2026}]",
+                                    Style::default().fg(Color::DarkGray),
+                                ))),
+                                Rect {
+                                    x: content_area.x,
+                                    y: content_area.y + y_offset,
+                                    width: content_area.width,
+                                    height: slot_h,
+                                },
+                            );
+                            y_offset += *height;
+                        } else if app.failed_images.contains(src) {
+                            let safe_src = safe_error_url(src);
+                            let label: &str = &safe_src[..safe_src
+                                .char_indices()
+                                .nth(60)
+                                .map(|(i, _)| i)
+                                .unwrap_or(safe_src.len())];
+                            let dim = Style::default().fg(Color::DarkGray);
+                            let slot_h =
+                                (*height).min(content_area.height.saturating_sub(y_offset));
+                            f.render_widget(
+                                Paragraph::new(
+                                    Line::from(vec![
+                                        Span::raw(" [image unavailable: "),
+                                        Span::raw(label.to_owned()),
+                                        Span::raw("]"),
+                                    ])
+                                    .style(dim),
+                                ),
+                                Rect {
+                                    x: content_area.x,
+                                    y: content_area.y + y_offset,
+                                    width: content_area.width,
+                                    height: slot_h,
+                                },
+                            );
+                            y_offset += *height;
                         } else {
-                            y_offset += 1;
+                            // Not yet scheduled (concurrency cap hit) or first frame.
+                            // Show loading indicator so the gap is never silently blank.
+                            let slot_h =
+                                (*height).min(content_area.height.saturating_sub(y_offset));
+                            f.render_widget(
+                                Paragraph::new(Line::from(Span::styled(
+                                    " [loading\u{2026}]",
+                                    Style::default().fg(Color::DarkGray),
+                                ))),
+                                Rect {
+                                    x: content_area.x,
+                                    y: content_area.y + y_offset,
+                                    width: content_area.width,
+                                    height: slot_h,
+                                },
+                            );
+                            y_offset += *height;
                         }
                     }
                 }
@@ -719,6 +903,9 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
             }
         }
     }; // end 'main loop
+
+    // Signal any in-flight fetch threads that this session is over.
+    shutdown.store(true, Ordering::Relaxed);
 
     disable_raw_mode()?;
     execute!(

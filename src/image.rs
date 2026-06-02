@@ -34,6 +34,29 @@ pub fn is_remote_url(s: &str) -> bool {
             .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
 }
 
+/// Sanitise a URL for use in error messages / UI placeholders.
+/// Strips query string, fragment, and userinfo (user:pass@) to avoid
+/// leaking tokens or credentials.
+pub fn safe_error_url(url: &str) -> String {
+    // Strip query and fragment.
+    let no_query = url
+        .split('?')
+        .next()
+        .and_then(|s| s.split('#').next())
+        .unwrap_or(url);
+    // Strip userinfo from the authority component (user:pass@host → host).
+    if let Some(scheme_end) = no_query.find("://") {
+        let after_scheme = scheme_end + 3;
+        let rest = &no_query[after_scheme..];
+        if let Some(at_pos) = rest.find('@') {
+            if !rest[..at_pos].contains('/') {
+                return format!("{}{}", &no_query[..after_scheme], &rest[at_pos + 1..]);
+            }
+        }
+    }
+    no_query.to_owned()
+}
+
 /// Fetch and decode a remote image over HTTP or HTTPS.
 pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     if !is_remote_url(url) {
@@ -42,12 +65,7 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
         anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set)");
     }
-    // Strip query string and fragment for error messages to avoid leaking tokens.
-    let safe_url = url
-        .split('?')
-        .next()
-        .and_then(|s| s.split('#').next())
-        .unwrap_or(url);
+    let safe_url = safe_error_url(url);
     let mut buf = Vec::new();
     ureq::get(url)
         .timeout(Duration::from_secs(10))
@@ -63,7 +81,7 @@ pub fn load_image_url(url: &str) -> Result<DynamicImage> {
         );
     }
     // SVG has no raster dimensions; handle it before the pixel guard.
-    if svg::is_svg_path(safe_url) {
+    if svg::is_svg_path(&safe_url) {
         return svg::rasterize(&buf);
     }
     // Guard against decompression-bomb images. Fail closed: if imagesize

@@ -19,7 +19,7 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
-use crate::image::{is_remote_url, ImageCache};
+use crate::image::{is_remote_url, safe_error_url, ImageCache};
 use crate::links::{build_anchor_map, collect_links, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
@@ -564,16 +564,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             );
                             y_offset += *height;
                         } else if app.failed_images.contains(src) {
-                            // Show a visible placeholder so failures aren't
-                            // silent blank gaps, while still consuming the
-                            // reserved height to keep scroll math consistent.
-                            // Strip query/fragment to avoid leaking tokens in the UI.
-                            // Truncate at a char boundary to avoid panics on non-ASCII URLs.
-                            let safe_src = src
-                                .split('?')
-                                .next()
-                                .and_then(|s| s.split('#').next())
-                                .unwrap_or(src);
+                            let safe_src = safe_error_url(src);
                             let label: &str = &safe_src[..safe_src
                                 .char_indices()
                                 .nth(60)
@@ -584,7 +575,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                                 Paragraph::new(
                                     Line::from(vec![
                                         Span::raw(" [image unavailable: "),
-                                        Span::raw(label),
+                                        Span::raw(label.to_owned()),
                                         Span::raw("]"),
                                     ])
                                     .style(dim),
@@ -598,7 +589,20 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             );
                             y_offset += *height;
                         } else {
-                            // Not yet loaded (first frame before prefetch runs)
+                            // Not yet scheduled (concurrency cap hit) or first frame.
+                            // Show loading indicator so the gap is never silently blank.
+                            f.render_widget(
+                                Paragraph::new(Line::from(Span::styled(
+                                    " [loading\u{2026}]",
+                                    Style::default().fg(Color::DarkGray),
+                                ))),
+                                Rect {
+                                    x: content_area.x,
+                                    y: content_area.y + y_offset,
+                                    width: content_area.width,
+                                    height: 1,
+                                },
+                            );
                             y_offset += *height;
                         }
                     }

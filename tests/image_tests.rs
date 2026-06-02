@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use vellum::image::{is_remote_url, load_image, ImageCache};
+use vellum::image::{is_remote_url, load_image, safe_error_url, ImageCache};
 
 // Serialize tests that mutate VELLUM_NO_REMOTE_IMAGES so they don't race.
 static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -50,6 +50,32 @@ fn test_load_svg_via_load_image() {
     let img = load_image(path).expect("SVG should load via load_image");
     assert_eq!(img.width(), 8);
     assert_eq!(img.height(), 8);
+}
+
+#[test]
+fn test_safe_error_url() {
+    // strips query and fragment
+    assert_eq!(
+        safe_error_url("https://example.com/img.png?token=secret#frag"),
+        "https://example.com/img.png"
+    );
+    // strips userinfo (credentials)
+    assert_eq!(
+        safe_error_url("https://user:pass@example.com/img.png"),
+        "https://example.com/img.png"
+    );
+    // strips both
+    assert_eq!(
+        safe_error_url("https://user:pass@example.com/img.png?tok=x#y"),
+        "https://example.com/img.png"
+    );
+    // plain URL unchanged
+    assert_eq!(
+        safe_error_url("https://example.com/img.png"),
+        "https://example.com/img.png"
+    );
+    // local path unchanged
+    assert_eq!(safe_error_url("/local/path/img.png"), "/local/path/img.png");
 }
 
 #[test]

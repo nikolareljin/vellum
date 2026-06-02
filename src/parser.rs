@@ -145,9 +145,9 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
                 return None;
             }
             // HTML comment: skip the whole block.
-            if lower[i..].starts_with("<!--") {
+            if bytes[i..].starts_with(b"<!--") {
                 let after_open = i + 4;
-                match lower[after_open..].find("-->") {
+                match bytes[after_open..].windows(3).position(|w| w == b"-->") {
                     Some(end_rel) => {
                         i = after_open + end_rel + 3;
                         continue;
@@ -160,7 +160,7 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
                 continue;
             }
             // We're at a `<`.
-            if lower[i..].starts_with("<img") {
+            if bytes[i..].starts_with(b"<img") {
                 match bytes.get(i + 4).copied() {
                     None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break i,
                     // e.g. <imgur — not a valid <img opener
@@ -679,6 +679,16 @@ mod tests {
     fn extract_img_tag_no_false_positive_on_imgur() {
         // <imgur> must not match the <img> detector
         assert!(extract_img_tag(r#"<imgur src="https://i.imgur.com/x.png">"#).is_none());
+    }
+
+    #[test]
+    fn extract_img_tag_non_ascii_before_img() {
+        // Non-ASCII UTF-8 text before the <img> tag must not cause a panic.
+        let html = "Héllo wörld <img src=\"https://example.com/x.png\" />";
+        assert_eq!(
+            extract_img_tag(html),
+            Some(("".into(), "https://example.com/x.png".into()))
+        );
     }
 
     #[test]

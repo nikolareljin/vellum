@@ -60,7 +60,10 @@ pub fn safe_error_url(url: &str) -> String {
 /// Fetch and decode a remote image over HTTP or HTTPS.
 pub fn load_image_url(url: &str) -> Result<DynamicImage> {
     if !is_remote_url(url) {
-        anyhow::bail!("load_image_url: expected http:// or https:// URL, got: {url}");
+        anyhow::bail!(
+            "load_image_url: expected http:// or https:// URL, got: {}",
+            safe_error_url(url)
+        );
     }
     if std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_some() {
         anyhow::bail!("remote image blocked (VELLUM_NO_REMOTE_IMAGES is set)");

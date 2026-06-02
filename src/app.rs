@@ -232,10 +232,13 @@ fn build_display_lines(
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
                 let is_remote = is_remote_url(&resolved);
-                // Create an Image slot for local readable files and remote URLs.
-                // Missing local files fall back to the styled text placeholder
-                // so they don't leave an invisible blank gap.
-                if is_remote || is_local_file_readable(&resolved) {
+                // Remote fetching is disabled: skip the Image slot so the
+                // layout doesn't reserve 10 blank rows per blocked URL.
+                let remote_allowed =
+                    is_remote && std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_none();
+                // Create an Image slot for local readable files and allowed remote URLs.
+                // Missing/blocked sources fall back to the styled text placeholder.
+                if remote_allowed || is_local_file_readable(&resolved) {
                     out.push(DisplayLine::Image {
                         src: resolved,
                         height: 10,

@@ -64,6 +64,12 @@ fn test_is_remote_url() {
     assert!(!is_remote_url("relative/img.png"));
     assert!(!is_remote_url("ftp://example.com/img.png"));
     assert!(!is_remote_url(""));
+    // Edge case: bare scheme prefix with no host — still matches (valid prefix)
+    assert!(is_remote_url("http://"));
+    assert!(is_remote_url("https://"));
+    // Shorter than any scheme → never remote
+    assert!(!is_remote_url("http:/"));
+    assert!(!is_remote_url("http:"));
 }
 
 #[test]

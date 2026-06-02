@@ -28,12 +28,10 @@ const MAX_REMOTE_PIXELS: u64 = 50_000_000;
 /// Returns `true` for `http://` and `https://` URLs, case-insensitively.
 /// URI schemes are case-insensitive per RFC 3986 §3.1.
 pub fn is_remote_url(s: &str) -> bool {
-    // Only lowercase the scheme prefix to avoid a full-string allocation.
-    let prefix = s
-        .get(..8)
-        .map(|p| p.to_ascii_lowercase())
-        .unwrap_or_default();
-    prefix.starts_with("http://") || prefix.starts_with("https://")
+    s.get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+        || s.get(..8)
+            .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
 }
 
 /// Fetch and decode a remote image over HTTP or HTTPS.

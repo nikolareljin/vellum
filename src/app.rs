@@ -234,8 +234,8 @@ fn build_display_lines(
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
                 let is_remote = is_remote_url(&resolved);
-                // Remote fetching is disabled: skip the Image slot so the
-                // layout doesn't reserve a blank img_height-row gap per blocked URL.
+                // true only when fetching is enabled (VELLUM_NO_REMOTE_IMAGES unset);
+                // blocked remote URLs get no Image slot, avoiding a blank gap.
                 let remote_allowed =
                     is_remote && std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_none();
                 // Create an Image slot for local readable files and allowed remote URLs.
@@ -384,13 +384,14 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // cols/4 rows makes the pixel rect square, so a 1:1 image fills exactly
     // half the terminal width; landscape images (wider aspect) fill more.
     //
-    // Bounds: min_h = 12 (always usable); max_h = min(cols/2, rows-2) so
-    // wider screens allow proportionally taller images while never exceeding
-    // the visible area (rows-2 leaves room for the status bar).
+    // Bounds: target = cols/4; max_h = min(cols/2, rows-2) so the slot never
+    // exceeds the visible area (rows-2 leaves room for the status bar).
+    // On very short terminals max_h can fall below min_h; clamp(min_h.min(max_h),
+    // max_h) degrades gracefully rather than panicking when min > max.
     let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let min_h: u16 = 12;
-    let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(min_h);
-    let img_height: u16 = (term_cols / 4).clamp(min_h, max_h);
+    let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(1);
+    let img_height: u16 = (term_cols / 4).clamp(min_h.min(max_h), max_h);
 
     let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme, img_height);
     let doc_links = collect_links(&elements);

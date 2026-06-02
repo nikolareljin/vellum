@@ -1,6 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::execute;
@@ -408,6 +409,10 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
         app.viewport_height = size.height.saturating_sub(1) as usize;
     }
 
+    // Shared flag: set to true when this TUI session ends so in-flight fetch
+    // threads skip sending results to the already-dropped receiver.
+    let shutdown = Arc::new(AtomicBool::new(false));
+
     // Labeled loop: break with NavAction to signal what to do next.
     // Terminal is cleaned up AFTER the loop.
     let action: NavAction = 'main: loop {
@@ -473,9 +478,15 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     }
                     app.pending_fetches.insert(src.clone());
                     let tx = app.fetch_tx.clone();
+                    let flag = Arc::clone(&shutdown);
                     std::thread::spawn(move || {
+                        if flag.load(Ordering::Relaxed) {
+                            return;
+                        }
                         let res = crate::image::load_image_url(&src).map_err(|e| e.to_string());
-                        let _ = tx.send((src, res));
+                        if !flag.load(Ordering::Relaxed) {
+                            let _ = tx.send((src, res));
+                        }
                     });
                 } else {
                     match app.image_cache.get_or_load(&src) {
@@ -873,6 +884,9 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
             }
         }
     }; // end 'main loop
+
+    // Signal any in-flight fetch threads that this session is over.
+    shutdown.store(true, Ordering::Relaxed);
 
     disable_raw_mode()?;
     execute!(

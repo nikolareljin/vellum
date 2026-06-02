@@ -384,11 +384,14 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // cols/4 rows makes the pixel rect square, so a 1:1 image fills exactly
     // half the terminal width; landscape images (wider aspect) fill more.
     //
-    // Bounds: min_h = 12 (always usable); max_h = half the viewport minus the
-    // status bar row (avoids a single image consuming the whole screen).
+    // Bounds: min_h = 12 (always usable); max_h scales with terminal width
+    // (cols/2) so wider screens show proportionally taller images, capped at
+    // the available row count minus the status bar to avoid overflow.
     let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let min_h: u16 = 12;
-    let max_h: u16 = term_rows.saturating_sub(5).max(min_h);
+    let max_h: u16 = (term_cols / 2)
+        .min(term_rows.saturating_sub(2))
+        .max(min_h);
     let img_height: u16 = (term_cols / 4).clamp(min_h, max_h);
 
     let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme, img_height);

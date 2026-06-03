@@ -323,30 +323,28 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
     if result.is_empty() { vec![line] } else { result }
 }
 
-/// Compute the terminal-row slot height for a local image such that
-/// `Resize::Fit` fills the allocated rectangle with no blank vertical padding.
+/// Compute the terminal-row slot height for a local image.
 ///
-/// Formula: `rows = ⌈term_cols × img_h_px / (img_w_px × 4)⌉`
-/// The ÷4 matches the `term_cols/4` fallback for square images (so the slot
-/// height equals the fallback for 1:1 images) while proportionally shrinking
-/// the slot for wide/short (landscape) images, where the original fixed formula
-/// over-allocated rows and left blank space below the rendered image.
+/// `Resize::Fit` in ratatui-image never scales an image *up* — it only scales
+/// down to fit within the slot.  Allocating more rows than the image's natural
+/// pixel height therefore leaves blank padding at the bottom.
 ///
-/// Uses `imagesize` to probe only the image header — no full decode.
-/// Returns `fallback` for remote URLs and files whose dimensions cannot be read.
+/// The correct slot height is: `rows = ⌈img_h_px / cell_h_px⌉`
+/// where `cell_h_px` is the terminal's actual pixel height per row, obtained
+/// from `crossterm::terminal::window_size()` (TIOCGWINSZ, no raw mode needed).
+///
+/// Falls back to `fallback` for remote URLs and unreadable files.
 /// Result is clamped to `[1, max_h]`.
-fn image_slot_height(src: &str, term_cols: u16, max_h: u16, fallback: u16) -> u16 {
+fn image_slot_height(src: &str, cell_h: u16, max_h: u16, fallback: u16) -> u16 {
     if is_remote_url(src) {
         return fallback;
     }
     if let Ok(size) = imagesize::size(src) {
-        let w = size.width as u32;
         let h = size.height as u32;
-        if w > 0 {
-            // Ceiling division: (a + b - 1) / b == ceil(a / b)
-            let rows = ((term_cols as u32 * h + w * 4 - 1) / (w * 4)) as u16;
-            return rows.clamp(1, max_h);
-        }
+        let ch = cell_h.max(1) as u32;
+        // Ceiling division: rows = ceil(img_h_px / cell_h_px)
+        let rows = ((h + ch - 1) / ch) as u16;
+        return rows.clamp(1, max_h);
     }
     fallback
 }
@@ -361,6 +359,7 @@ fn build_display_lines(
     base_dir: &Path,
     theme: &Theme,
     term_cols: usize,
+    cell_h: u16,
     img_max_h: u16,
     img_fallback_h: u16,
 ) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
@@ -379,7 +378,7 @@ fn build_display_lines(
                 // Create an Image slot for local readable files and allowed remote URLs.
                 // Missing/blocked sources fall back to the styled text placeholder.
                 if remote_allowed || is_local_file_readable(&resolved) {
-                    let h = image_slot_height(&resolved, term_cols as u16, img_max_h, img_fallback_h);
+                    let h = image_slot_height(&resolved, cell_h, img_max_h, img_fallback_h);
                     out.push(DisplayLine::Image { src: resolved, height: h });
                 } else {
                     let text_lines = render_elements(std::slice::from_ref(el), theme);
@@ -396,7 +395,7 @@ fn build_display_lines(
                 match extract_thumbnail(&resolved) {
                     Ok(tmp) => {
                         let path = tmp.path().to_string_lossy().to_string();
-                        let h = image_slot_height(&path, term_cols as u16, img_max_h, img_fallback_h);
+                        let h = image_slot_height(&path, cell_h, img_max_h, img_fallback_h);
                         out.push(DisplayLine::Image { src: path, height: h });
                         thumb_files.push(tmp);
                     }
@@ -515,19 +514,28 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     let base_dir = file.parent().unwrap_or(Path::new("."));
 
     // Query terminal dimensions before raw mode so build_display_lines can
-    // size image slots proportionally.  Falls back to 80×24 if unavailable.
+    // size image slots correctly.  Falls back to 80×24 if unavailable.
     //
-    // image_slot_height() computes each image's row count from its actual pixel
-    // dimensions so Resize::Fit fills the slot with no blank padding.  The
-    // fallback (used for remote URLs and unreadable files) is cols/4 — the
-    // previous global formula.  max_h caps any slot so it never exceeds the
-    // visible area (rows-2 leaves room for the status bar).
+    // Resize::Fit in ratatui-image never upscales — it only scales down.
+    // The correct slot height is ceil(img_h_px / cell_h_px): exactly as many
+    // rows as the image needs at native pixel size.  window_size() returns
+    // actual pixel dimensions via TIOCGWINSZ (works before raw mode).
     let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let cell_h: u16 = crossterm::terminal::window_size()
+        .ok()
+        .and_then(|ws| {
+            if ws.rows > 0 && ws.height > 0 {
+                Some((ws.height / ws.rows).max(1))
+            } else {
+                None
+            }
+        })
+        .unwrap_or(16); // assume 16 px per row when unavailable
     let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(1);
     let img_fallback_h: u16 = (term_cols / 4).clamp(1, max_h);
 
     let (display_lines, thumb_files) =
-        build_display_lines(&elements, base_dir, theme, term_cols as usize, max_h, img_fallback_h);
+        build_display_lines(&elements, base_dir, theme, term_cols as usize, cell_h, max_h, img_fallback_h);
     let doc_links = collect_links(&elements);
     let anchor_map = build_anchor_map(&elements);
     let fname = file
@@ -1141,40 +1149,41 @@ mod tests {
     }
 
     // ── image_slot_height ────────────────────────────────────────────────────────
+    // Tests use cell_h = 16 (typical 16 px per terminal row).
 
     #[test]
     fn image_slot_height_fallback_for_remote() {
-        let h = image_slot_height("https://example.com/img.png", 80, 40, 20);
+        let h = image_slot_height("https://example.com/img.png", 16, 40, 20);
         assert_eq!(h, 20, "remote URL must return fallback");
     }
 
     #[test]
     fn image_slot_height_fallback_for_missing_file() {
-        let h = image_slot_height("/nonexistent/img.png", 80, 40, 17);
+        let h = image_slot_height("/nonexistent/img.png", 16, 40, 17);
         assert_eq!(h, 17, "unreadable file must return fallback");
     }
 
     #[test]
     fn image_slot_height_square_image() {
-        // logo.png is 256×256; formula: ceil(80 * 256 / (256 * 4)) = ceil(20) = 20
+        // logo.png is 256×256; cell_h=16 → ceil(256/16) = 16 rows
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/img/logo.png");
-        let h = image_slot_height(path, 80, 40, 99);
-        assert_eq!(h, 20, "256×256 square at 80 cols should need 20 rows");
+        let h = image_slot_height(path, 16, 40, 99);
+        assert_eq!(h, 16, "256×256 at 16 px/row = 16 rows");
     }
 
     #[test]
     fn image_slot_height_landscape_image() {
-        // demo.png is 320×120; formula: ceil(80 * 120 / (320 * 4)) = ceil(7.5) = 8
+        // demo.png is 320×120; cell_h=16 → ceil(120/16) = ceil(7.5) = 8 rows
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/screenshots/demo.png");
-        let h = image_slot_height(path, 80, 40, 99);
-        assert_eq!(h, 8, "landscape image at 80 cols needs fewer rows than square");
+        let h = image_slot_height(path, 16, 40, 99);
+        assert_eq!(h, 8, "landscape 120 px tall at 16 px/row = 8 rows");
     }
 
     #[test]
     fn image_slot_height_clamped_by_max_h() {
-        // logo.png 256×256 at 80 cols = 20 rows; max_h=10 clamps to 10
+        // logo.png 256×256, cell_h=16 → 16 rows; max_h=10 clamps to 10
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/img/logo.png");
-        let h = image_slot_height(path, 80, 10, 99);
+        let h = image_slot_height(path, 16, 10, 99);
         assert_eq!(h, 10, "result must be clamped to max_h");
     }
 }

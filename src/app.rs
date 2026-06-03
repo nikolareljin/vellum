@@ -21,7 +21,7 @@ use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
 use crate::image::{is_remote_url, safe_error_url, ImageCache};
-use crate::links::{build_anchor_map, collect_links, open_url};
+use crate::links::{anchor_from_heading, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::render_elements;
 use crate::search::{search_lines, SearchResult};
@@ -248,6 +248,13 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
         return vec![line];
     }
 
+    // Cheap pre-check: measure total char count without allocating.  The vast
+    // majority of lines fit within the terminal and take this early exit.
+    let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    if total_chars <= max_width {
+        return vec![line];
+    }
+
     let chars: Vec<(char, ratatui::style::Style)> = line
         .spans
         .iter()
@@ -256,10 +263,6 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
             s.content.chars().map(move |c| (c, style))
         })
         .collect();
-
-    if chars.len() <= max_width {
-        return vec![line];
-    }
 
     let mut result: Vec<Line<'static>> = Vec::new();
     let mut current: Vec<(char, ratatui::style::Style)> = Vec::new();
@@ -383,11 +386,43 @@ fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallbac
     fallback
 }
 
-/// Build DisplayLine list. Returns (lines, thumb_files).
+/// Collect hrefs from an element into `links`, using `line_offset` as the
+/// display-line index.  Recurses into list items and blockquotes so that
+/// links inside those containers also receive a (approximate) offset.
+fn collect_element_links(el: &Element, line_offset: usize, links: &mut Vec<(String, usize)>) {
+    match el {
+        Element::Paragraph(spans) => {
+            for span in spans {
+                if let crate::parser::Span::Link { href, .. } = span {
+                    links.push((href.clone(), line_offset));
+                }
+            }
+        }
+        Element::List { items, .. } => {
+            for item in items {
+                for item_el in item {
+                    collect_element_links(item_el, line_offset, links);
+                }
+            }
+        }
+        Element::BlockQuote(inner) => {
+            for inner_el in inner {
+                collect_element_links(inner_el, line_offset, links);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Build DisplayLine list.  Also returns the link map and anchor map built
+/// from actual display-line indices (replacing the approximate +2-per-element
+/// counting previously done by `collect_links` / `build_anchor_map`).
+///
 /// `base_dir` is the directory that contains the Markdown file; image paths
 /// that are relative are resolved against it so that `vellum /any/dir/doc.md`
 /// always finds sibling images regardless of the shell's working directory.
 /// thumb_files must be kept alive by the caller (drop = delete temp files).
+#[allow(clippy::type_complexity)]
 fn build_display_lines(
     elements: &[Element],
     base_dir: &Path,
@@ -396,11 +431,19 @@ fn build_display_lines(
     cell_h: u16,
     img_max_h: u16,
     img_fallback_h: u16,
-) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
+) -> (
+    Vec<DisplayLine>,
+    Vec<tempfile::NamedTempFile>,
+    Vec<(String, usize)>,
+    std::collections::HashMap<String, usize>,
+) {
     let mut out = Vec::new();
     let mut thumb_files = Vec::new();
+    let mut doc_links: Vec<(String, usize)> = Vec::new();
+    let mut anchor_map: std::collections::HashMap<String, usize> = Default::default();
 
     for el in elements {
+        let start_line = out.len();
         match el {
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
@@ -462,6 +505,15 @@ fn build_display_lines(
                     }
                 }
             }
+            Element::Heading { text, .. } => {
+                let text_lines = render_elements(std::slice::from_ref(el), theme);
+                for l in text_lines {
+                    for wrapped in wrap_line(l, term_cols) {
+                        out.push(DisplayLine::Text(wrapped));
+                    }
+                }
+                anchor_map.insert(anchor_from_heading(text), start_line);
+            }
             _ => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
@@ -469,10 +521,11 @@ fn build_display_lines(
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
+                collect_element_links(el, start_line, &mut doc_links);
             }
         }
     }
-    (out, thumb_files)
+    (out, thumb_files, doc_links, anchor_map)
 }
 
 /// Resolve and follow `href` from the context of `file`:
@@ -586,7 +639,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(1);
     let img_fallback_h: u16 = (term_cols / 4).clamp(1, max_h);
 
-    let (display_lines, thumb_files) = build_display_lines(
+    let (display_lines, thumb_files, doc_links, anchor_map) = build_display_lines(
         &elements,
         base_dir,
         theme,
@@ -595,8 +648,6 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
         max_h,
         img_fallback_h,
     );
-    let doc_links = collect_links(&elements);
-    let anchor_map = build_anchor_map(&elements);
     let fname = file
         .file_name()
         .unwrap_or_default()

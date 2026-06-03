@@ -215,6 +215,142 @@ impl App {
     }
 }
 
+/// Rebuild a flat `(char, Style)` sequence into a styled `Line`.
+/// Consecutive chars with the same `Style` are merged into one `Span`.
+fn chars_to_line(chars: Vec<(char, ratatui::style::Style)>) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buf = String::new();
+    let mut cur_style = ratatui::style::Style::default();
+
+    for (c, style) in chars {
+        if style != cur_style && !buf.is_empty() {
+            spans.push(Span::styled(buf.clone(), cur_style));
+            buf.clear();
+        }
+        cur_style = style;
+        buf.push(c);
+    }
+    if !buf.is_empty() {
+        spans.push(Span::styled(buf, cur_style));
+    }
+    Line::from(spans)
+}
+
+/// Word-wrap a styled `Line` into multiple `Line`s, each ≤ `max_width` chars wide.
+///
+/// Breaks at whitespace boundaries; falls back to a hard-break at `max_width` for
+/// tokens (long code identifiers, URLs) that exceed the full terminal width.
+/// Returns the original single-element vec when the line already fits.
+///
+/// Width is measured in Unicode scalar values (char count). CJK / combining
+/// characters may wrap a column or two early — acceptable for this renderer.
+pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
+    if max_width == 0 {
+        return vec![line];
+    }
+
+    let chars: Vec<(char, ratatui::style::Style)> = line
+        .spans
+        .iter()
+        .flat_map(|s| {
+            let style = s.style;
+            s.content.chars().map(move |c| (c, style))
+        })
+        .collect();
+
+    if chars.len() <= max_width {
+        return vec![line];
+    }
+
+    let mut result: Vec<Line<'static>> = Vec::new();
+    let mut current: Vec<(char, ratatui::style::Style)> = Vec::new();
+    let mut col: usize = 0;
+    let mut pending_space = false;
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i].0.is_whitespace() {
+            if col > 0 {
+                pending_space = true;
+            }
+            while i < chars.len() && chars[i].0.is_whitespace() {
+                i += 1;
+            }
+        } else {
+            let word_start = i;
+            while i < chars.len() && !chars[i].0.is_whitespace() {
+                i += 1;
+            }
+            let word = &chars[word_start..i];
+            let word_len = word.len();
+            let space_cost = if pending_space { 1 } else { 0 };
+
+            if col > 0 && col + space_cost + word_len > max_width {
+                result.push(chars_to_line(std::mem::take(&mut current)));
+                col = 0;
+                pending_space = false;
+            }
+
+            if word_len >= max_width {
+                // Token wider than terminal — hard-break it.
+                if col > 0 {
+                    result.push(chars_to_line(std::mem::take(&mut current)));
+                }
+                let mut rem = word;
+                while rem.len() >= max_width {
+                    current.extend_from_slice(&rem[..max_width]);
+                    result.push(chars_to_line(std::mem::take(&mut current)));
+                    rem = &rem[max_width..];
+                }
+                current.extend_from_slice(rem);
+                col = rem.len();
+            } else {
+                if pending_space {
+                    current.push((' ', ratatui::style::Style::default()));
+                    col += 1;
+                }
+                current.extend_from_slice(word);
+                col += word_len;
+            }
+            pending_space = false;
+        }
+    }
+
+    if !current.is_empty() {
+        result.push(chars_to_line(current));
+    }
+
+    if result.is_empty() { vec![line] } else { result }
+}
+
+/// Compute the terminal-row slot height for a local image such that
+/// `Resize::Fit` fills the allocated rectangle with no blank vertical padding.
+///
+/// Formula: `rows = ⌈term_cols × img_h_px / (img_w_px × 4)⌉`
+/// The ÷4 matches the `term_cols/4` fallback for square images (so the slot
+/// height equals the fallback for 1:1 images) while proportionally shrinking
+/// the slot for wide/short (landscape) images, where the original fixed formula
+/// over-allocated rows and left blank space below the rendered image.
+///
+/// Uses `imagesize` to probe only the image header — no full decode.
+/// Returns `fallback` for remote URLs and files whose dimensions cannot be read.
+/// Result is clamped to `[1, max_h]`.
+fn image_slot_height(src: &str, term_cols: u16, max_h: u16, fallback: u16) -> u16 {
+    if is_remote_url(src) {
+        return fallback;
+    }
+    if let Ok(size) = imagesize::size(src) {
+        let w = size.width as u32;
+        let h = size.height as u32;
+        if w > 0 {
+            // Ceiling division: (a + b - 1) / b == ceil(a / b)
+            let rows = ((term_cols as u32 * h + w * 4 - 1) / (w * 4)) as u16;
+            return rows.clamp(1, max_h);
+        }
+    }
+    fallback
+}
+
 /// Build DisplayLine list. Returns (lines, thumb_files).
 /// `base_dir` is the directory that contains the Markdown file; image paths
 /// that are relative are resolved against it so that `vellum /any/dir/doc.md`
@@ -224,7 +360,9 @@ fn build_display_lines(
     elements: &[Element],
     base_dir: &Path,
     theme: &Theme,
-    img_height: u16,
+    term_cols: usize,
+    img_max_h: u16,
+    img_fallback_h: u16,
 ) -> (Vec<DisplayLine>, Vec<tempfile::NamedTempFile>) {
     let mut out = Vec::new();
     let mut thumb_files = Vec::new();
@@ -241,15 +379,15 @@ fn build_display_lines(
                 // Create an Image slot for local readable files and allowed remote URLs.
                 // Missing/blocked sources fall back to the styled text placeholder.
                 if remote_allowed || is_local_file_readable(&resolved) {
-                    out.push(DisplayLine::Image {
-                        src: resolved,
-                        height: img_height,
-                    });
+                    let h = image_slot_height(&resolved, term_cols as u16, img_max_h, img_fallback_h);
+                    out.push(DisplayLine::Image { src: resolved, height: h });
                     out.push(DisplayLine::Text(Line::from("")));
                 } else {
                     let text_lines = render_elements(std::slice::from_ref(el), theme);
                     for l in text_lines {
-                        out.push(DisplayLine::Text(l));
+                        for wrapped in wrap_line(l, term_cols) {
+                            out.push(DisplayLine::Text(wrapped));
+                        }
                     }
                 }
             }
@@ -259,10 +397,8 @@ fn build_display_lines(
                 match extract_thumbnail(&resolved) {
                     Ok(tmp) => {
                         let path = tmp.path().to_string_lossy().to_string();
-                        out.push(DisplayLine::Image {
-                            src: path,
-                            height: img_height,
-                        });
+                        let h = image_slot_height(&path, term_cols as u16, img_max_h, img_fallback_h);
+                        out.push(DisplayLine::Image { src: path, height: h });
                         out.push(DisplayLine::Text(Line::from("")));
                         thumb_files.push(tmp);
                     }
@@ -270,7 +406,9 @@ fn build_display_lines(
                         // ffmpeg missing or file unreadable — text placeholder
                         let text_lines = render_elements(std::slice::from_ref(el), theme);
                         for l in text_lines {
-                            out.push(DisplayLine::Text(l));
+                            for wrapped in wrap_line(l, term_cols) {
+                                out.push(DisplayLine::Text(wrapped));
+                            }
                         }
                     }
                 }
@@ -278,7 +416,9 @@ fn build_display_lines(
             _ => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    out.push(DisplayLine::Text(l));
+                    for wrapped in wrap_line(l, term_cols) {
+                        out.push(DisplayLine::Text(wrapped));
+                    }
                 }
             }
         }
@@ -379,21 +519,17 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // Query terminal dimensions before raw mode so build_display_lines can
     // size image slots proportionally.  Falls back to 80×24 if unavailable.
     //
-    // Target: images render at ≥ half the terminal width.  With a 2:1 cell
-    // pixel ratio (typical monospace: 8 px wide × 16 px tall), a slot of
-    // cols/4 rows makes the pixel rect square, so a 1:1 image fills exactly
-    // half the terminal width; landscape images (wider aspect) fill more.
-    //
-    // Bounds: target = cols/4; max_h = min(cols/2, rows-2) so the slot never
-    // exceeds the visible area (rows-2 leaves room for the status bar).
-    // On very short terminals max_h can fall below min_h; clamp(min_h.min(max_h),
-    // max_h) degrades gracefully rather than panicking when min > max.
+    // image_slot_height() computes each image's row count from its actual pixel
+    // dimensions so Resize::Fit fills the slot with no blank padding.  The
+    // fallback (used for remote URLs and unreadable files) is cols/4 — the
+    // previous global formula.  max_h caps any slot so it never exceeds the
+    // visible area (rows-2 leaves room for the status bar).
     let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    let min_h: u16 = 12;
     let max_h: u16 = (term_cols / 2).min(term_rows.saturating_sub(2)).max(1);
-    let img_height: u16 = (term_cols / 4).clamp(min_h.min(max_h), max_h);
+    let img_fallback_h: u16 = (term_cols / 4).clamp(1, max_h);
 
-    let (display_lines, thumb_files) = build_display_lines(&elements, base_dir, theme, img_height);
+    let (display_lines, thumb_files) =
+        build_display_lines(&elements, base_dir, theme, term_cols as usize, max_h, img_fallback_h);
     let doc_links = collect_links(&elements);
     let anchor_map = build_anchor_map(&elements);
     let fname = file
@@ -942,4 +1078,105 @@ fn which_exists(cmd: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+
+    // ── wrap_line ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn wrap_line_short_text_unchanged() {
+        let line = Line::from("hello world");
+        let result = wrap_line(line, 80);
+        assert_eq!(result.len(), 1);
+        let text: String = result[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "hello world");
+    }
+
+    #[test]
+    fn wrap_line_exact_width_unchanged() {
+        let line = Line::from("hello");
+        assert_eq!(wrap_line(line, 5).len(), 1);
+    }
+
+    #[test]
+    fn wrap_line_wraps_at_word_boundary() {
+        // "hello world" = 11 chars; max 8 → break between words
+        let line = Line::from("hello world");
+        let result = wrap_line(line, 8);
+        assert_eq!(result.len(), 2);
+        let first: String = result[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        let second: String = result[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(first, "hello");
+        assert_eq!(second, "world");
+    }
+
+    #[test]
+    fn wrap_line_hard_breaks_long_word() {
+        // "abcdefghij" = 10 chars; max 4 → 3 lines (4 + 4 + 2)
+        let line = Line::from("abcdefghij");
+        let result = wrap_line(line, 4);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn wrap_line_preserves_span_styles() {
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let line = Line::from(vec![
+            Span::raw("plain "),
+            Span::styled("bold", bold),
+            Span::raw(" plain"),
+        ]);
+        // "plain bold plain" = 16 chars; max 10 → wraps
+        let result = wrap_line(line, 10);
+        assert!(result.len() >= 2);
+        let has_bold = result.iter().any(|l| {
+            l.spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD))
+        });
+        assert!(has_bold, "bold style must survive wrapping");
+    }
+
+    // ── image_slot_height ────────────────────────────────────────────────────────
+
+    #[test]
+    fn image_slot_height_fallback_for_remote() {
+        let h = image_slot_height("https://example.com/img.png", 80, 40, 20);
+        assert_eq!(h, 20, "remote URL must return fallback");
+    }
+
+    #[test]
+    fn image_slot_height_fallback_for_missing_file() {
+        let h = image_slot_height("/nonexistent/img.png", 80, 40, 17);
+        assert_eq!(h, 17, "unreadable file must return fallback");
+    }
+
+    #[test]
+    fn image_slot_height_square_image() {
+        // logo.png is 256×256; formula: ceil(80 * 256 / (256 * 4)) = ceil(20) = 20
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/img/logo.png");
+        let h = image_slot_height(path, 80, 40, 99);
+        assert_eq!(h, 20, "256×256 square at 80 cols should need 20 rows");
+    }
+
+    #[test]
+    fn image_slot_height_landscape_image() {
+        // demo.png is 320×120; formula: ceil(80 * 120 / (320 * 4)) = ceil(7.5) = 8
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/screenshots/demo.png");
+        let h = image_slot_height(path, 80, 40, 99);
+        assert_eq!(h, 8, "landscape image at 80 cols needs fewer rows than square");
+    }
+
+    #[test]
+    fn image_slot_height_clamped_by_max_h() {
+        // logo.png 256×256 at 80 cols = 20 rows; max_h=10 clamps to 10
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/img/logo.png");
+        let h = image_slot_height(path, 80, 10, 99);
+        assert_eq!(h, 10, "result must be clamped to max_h");
+    }
 }

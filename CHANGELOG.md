@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - Long text lines (paragraphs, list items, blockquotes, headings) now word-wrap at the terminal edge instead of overflowing invisibly to the right. Hard-break fallback handles tokens wider than the terminal width (closes #9).
 - Wide/short (landscape) images no longer over-allocate vertical rows. Slot height is now computed from each image's actual pixel dimensions (`ceil(cols × img_h / (img_w × 4))`), proportionally reducing empty space below images with a wide aspect ratio (closes #9).
+- Images no longer insert a blank separator row between themselves and the following text; content appears immediately below with no extra gap (closes #9).
 
 ## [0.6.1] — 2026-05-31
 

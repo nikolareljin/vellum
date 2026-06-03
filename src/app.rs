@@ -224,8 +224,7 @@ fn chars_to_line(chars: Vec<(char, ratatui::style::Style)>) -> Line<'static> {
 
     for (c, style) in chars {
         if style != cur_style && !buf.is_empty() {
-            spans.push(Span::styled(buf.clone(), cur_style));
-            buf.clear();
+            spans.push(Span::styled(std::mem::take(&mut buf), cur_style));
         }
         cur_style = style;
         buf.push(c);
@@ -265,7 +264,10 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
     let mut result: Vec<Line<'static>> = Vec::new();
     let mut current: Vec<(char, ratatui::style::Style)> = Vec::new();
     let mut col: usize = 0;
-    let mut pending_space = false;
+    // Style of the first whitespace char in the inter-word gap, preserved so
+    // that the re-inserted space keeps the original styling (e.g. styled space
+    // after a list bullet keeps the bullet's colour/background).
+    let mut pending_space: Option<ratatui::style::Style> = None;
 
     // Preserve leading whitespace on the first output line (indentation, bullet
     // prefixes, heading padding).  Continuation lines after a wrap break start
@@ -280,7 +282,8 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
     while i < chars.len() {
         if chars[i].0.is_whitespace() {
             if col > 0 {
-                pending_space = true;
+                // Capture the style of the first whitespace char in this run.
+                pending_space.get_or_insert(chars[i].1);
             }
             while i < chars.len() && chars[i].0.is_whitespace() {
                 i += 1;
@@ -292,12 +295,12 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
             }
             let word = &chars[word_start..i];
             let word_len = word.len();
-            let space_cost = if pending_space { 1 } else { 0 };
+            let space_cost = if pending_space.is_some() { 1 } else { 0 };
 
             if col > 0 && col + space_cost + word_len > max_width {
                 result.push(chars_to_line(std::mem::take(&mut current)));
                 col = 0;
-                pending_space = false;
+                pending_space = None;
             }
 
             if word_len >= max_width {
@@ -314,14 +317,14 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
                 current.extend_from_slice(rem);
                 col = rem.len();
             } else {
-                if pending_space {
-                    current.push((' ', ratatui::style::Style::default()));
+                if let Some(sp_style) = pending_space.take() {
+                    current.push((' ', sp_style));
                     col += 1;
                 }
                 current.extend_from_slice(word);
                 col += word_len;
             }
-            pending_space = false;
+            pending_space = None;
         }
     }
 
@@ -365,12 +368,12 @@ fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallbac
         let ch = cell_h.max(1) as u32;
 
         // Constraint 1: natural pixel height → rows.
-        let natural = ((h + ch - 1) / ch) as u16;
+        let natural = h.div_ceil(ch) as u16;
 
         // Constraint 2: when the image is wider than the terminal it is scaled
         // down proportionally; compute the resulting height (assumes 2:1 ratio).
         let width_limited = if w > 0 {
-            ((h * term_cols as u32 + w * 2 - 1) / (w * 2)) as u16
+            (h * term_cols as u32).div_ceil(w * 2) as u16
         } else {
             natural
         };

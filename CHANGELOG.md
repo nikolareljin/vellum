@@ -9,10 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.6.2] — 2026-06-03
 
 ### Fixed
-- Long text lines (paragraphs, list items, blockquotes, headings) now word-wrap at the terminal edge instead of overflowing invisibly to the right. Hard-break fallback handles tokens wider than the terminal width (closes #9).
-- Wide/short (landscape) images no longer over-allocate vertical rows. Slot height is now computed from each image's actual pixel dimensions (`ceil(cols × img_h / (img_w × 4))`), proportionally reducing empty space below images with a wide aspect ratio (closes #9).
+- Long text lines (paragraphs, list items, blockquotes, headings) now word-wrap at the terminal edge instead of overflowing invisibly to the right. Leading indentation (code-block padding, list bullets, heading prefixes) is preserved on the first line; hard-break fallback handles tokens wider than the terminal width (closes #9).
 - Images no longer insert a blank separator row between themselves and the following text; content appears immediately below with no extra gap (closes #9).
-- Image slot height is now derived from the image's actual pixel height divided by the terminal's real cell pixel height (queried via `TIOCGWINSZ` before raw mode), matching the `Resize::Fit` behaviour which never upscales. Previously the slot was computed from an aspect-ratio formula that could over-allocate by 2× on Kitty/Sixel terminals (closes #9).
+- Image slot height is now `min(⌈img_h_px / cell_h_px⌉, ⌈img_h_px × cols / (img_w_px × 2)⌉)`, clamped to `[1, max_h]`. `cell_h_px` is the actual terminal row height in pixels from `TIOCGWINSZ` (queried before raw mode; falls back to 16 px). This matches `Resize::Fit`'s no-upscale behaviour and correctly handles images wider than the terminal (closes #9).
 
 ## [0.6.1] — 2026-05-31
 

@@ -90,10 +90,19 @@ impl NavHistory {
 #[derive(Clone)]
 pub enum DisplayLine {
     Text(Line<'static>),
-    /// Image: the src path and desired height in terminal rows.
+    /// Full-width block image (remote or no text to pair with).
     Image {
         src: String,
         height: u16,
+    },
+    /// Image floated left with text flowing to the right.
+    /// `img_cols` terminal columns are reserved for the image; `side_text`
+    /// lines fill the right portion row-by-row for the duration of `height`.
+    InlineImage {
+        src: String,
+        height: u16,
+        img_cols: u16,
+        side_text: Vec<Line<'static>>,
     },
 }
 
@@ -180,7 +189,8 @@ impl App {
         let mut idx = self.lines.len();
         while idx > 0 {
             let entry_rows = match &self.lines[idx - 1] {
-                DisplayLine::Image { height, .. } => *height as usize,
+                DisplayLine::Image { height, .. }
+                | DisplayLine::InlineImage { height, .. } => *height as usize,
                 DisplayLine::Text(_) => 1,
             };
             if rows + entry_rows > self.viewport_height {
@@ -351,6 +361,98 @@ fn image_slot_height(src: &str, term_cols: u16, max_h: u16, fallback: u16) -> u1
     fallback
 }
 
+/// Compute the terminal columns a local image occupies when rendered via
+/// `Resize::Fit` in a slot of `height` rows, assuming a 2:1 cell pixel ratio.
+///
+/// Formula: `cols = ⌈height × 2 × img_w_px / img_h_px⌉`
+fn compute_img_cols(src: &str, height: u16) -> u16 {
+    if let Ok(size) = imagesize::size(src) {
+        let w = size.width as u32;
+        let h = size.height as u32;
+        if h > 0 {
+            return ((height as u32 * 2 * w + h - 1) / h) as u16;
+        }
+    }
+    height * 2 // fallback: assume square
+}
+
+/// Convert Image entries to InlineImage where there is enough room for text.
+///
+/// For each local Image, the immediately following Text lines are re-wrapped at
+/// the narrower side-text width and stored inside the InlineImage entry.  This
+/// lets the render loop place the image on the left and the text on the right
+/// within the same block of terminal rows — no blank vertical gap.
+///
+/// Remote images, and images where the remaining column width would be less
+/// than MIN_TEXT_COLS, keep their original full-width Image form.
+fn consolidate_inline_images(lines: Vec<DisplayLine>, term_cols: usize) -> Vec<DisplayLine> {
+    const MIN_TEXT_COLS: u16 = 20;
+    let mut result: Vec<DisplayLine> = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let (src, height) = match &lines[i] {
+            DisplayLine::Image { src, height } if !is_remote_url(src) => {
+                (src.clone(), *height)
+            }
+            _ => {
+                result.push(lines[i].clone());
+                i += 1;
+                continue;
+            }
+        };
+
+        let img_cols = compute_img_cols(&src, height).min(term_cols as u16);
+        let text_width = (term_cols as u16).saturating_sub(img_cols.saturating_add(1));
+
+        if text_width < MIN_TEXT_COLS {
+            result.push(lines[i].clone());
+            i += 1;
+            continue;
+        }
+
+        // Skip the single blank separator build_display_lines appends after images.
+        let mut j = i + 1;
+        if j < lines.len() {
+            if let DisplayLine::Text(l) = &lines[j] {
+                if l.spans.iter().all(|s| s.content.is_empty()) {
+                    j += 1;
+                }
+            }
+        }
+
+        // Collect up to `height` Text entries as raw material for side text.
+        let mut source: Vec<Line<'static>> = Vec::new();
+        while j < lines.len() && source.len() < height as usize {
+            match &lines[j] {
+                DisplayLine::Text(l) => {
+                    source.push(l.clone());
+                    j += 1;
+                }
+                _ => break,
+            }
+        }
+
+        // Re-wrap at the narrower text_width, then split at height.
+        let mut all_wrapped: Vec<Line<'static>> = Vec::new();
+        for line in source {
+            for w in wrap_line(line, text_width as usize) {
+                all_wrapped.push(w);
+            }
+        }
+        let side_text: Vec<_> = all_wrapped.iter().take(height as usize).cloned().collect();
+        let overflow: Vec<_> = all_wrapped.into_iter().skip(height as usize).collect();
+
+        result.push(DisplayLine::InlineImage { src, height, img_cols, side_text });
+        for line in overflow {
+            result.push(DisplayLine::Text(line));
+        }
+        i = j;
+    }
+
+    result
+}
+
 /// Build DisplayLine list. Returns (lines, thumb_files).
 /// `base_dir` is the directory that contains the Markdown file; image paths
 /// that are relative are resolved against it so that `vellum /any/dir/doc.md`
@@ -423,6 +525,7 @@ fn build_display_lines(
             }
         }
     }
+    let out = consolidate_inline_images(out, term_cols);
     (out, thumb_files)
 }
 
@@ -454,7 +557,8 @@ fn viewport_row_to_entry(lines: &[DisplayLine], scroll: usize, row: usize) -> us
     let mut rows = 0usize;
     for (i, dl) in lines.iter().enumerate().skip(scroll) {
         let entry_height = match dl {
-            DisplayLine::Image { height, .. } => *height as usize,
+            DisplayLine::Image { height, .. }
+            | DisplayLine::InlineImage { height, .. } => *height as usize,
             DisplayLine::Text(_) => 1,
         };
         if row < rows + entry_height {
@@ -603,13 +707,15 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         return false;
                     }
                     rows_seen += match dl {
-                        DisplayLine::Image { height, .. } => *height as usize,
+                        DisplayLine::Image { height, .. }
+                        | DisplayLine::InlineImage { height, .. } => *height as usize,
                         DisplayLine::Text(_) => 1,
                     };
                     true
                 })
                 .filter_map(|dl| match dl {
                     DisplayLine::Image { src, .. }
+                    | DisplayLine::InlineImage { src, .. }
                         if !app.image_states.contains_key(src)
                             && !app.failed_images.contains(src)
                             && !app.pending_fetches.contains(src) =>
@@ -778,6 +884,61 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             y_offset += *height;
                         }
                     }
+                    DisplayLine::InlineImage { src, height, img_cols, side_text } => {
+                        let slot_h = (*height).min(content_area.height.saturating_sub(y_offset));
+                        let text_x = content_area.x + img_cols;
+                        let text_w = content_area.width.saturating_sub(*img_cols);
+
+                        // Left portion — image (or placeholder).
+                        let img_rect = Rect {
+                            x: content_area.x,
+                            y: content_area.y + y_offset,
+                            width: (*img_cols).min(content_area.width),
+                            height: slot_h,
+                        };
+                        if img_rect.width > 0 && img_rect.height > 0 {
+                            if app.image_states.contains_key(src) {
+                                if let Some(state) = app.image_states.get_mut(src) {
+                                    f.render_stateful_widget(
+                                        StatefulImage::new().resize(Resize::Fit(None)),
+                                        img_rect,
+                                        state,
+                                    );
+                                }
+                            } else {
+                                let label = if app.failed_images.contains(src) {
+                                    " [image unavailable]"
+                                } else {
+                                    " [loading\u{2026}]"
+                                };
+                                f.render_widget(
+                                    Paragraph::new(Line::from(Span::styled(
+                                        label,
+                                        Style::default().fg(Color::DarkGray),
+                                    ))),
+                                    img_rect,
+                                );
+                            }
+                        }
+
+                        // Right portion — side text lines.
+                        if text_w > 0 {
+                            for (row, line) in side_text.iter().enumerate().take(slot_h as usize) {
+                                f.render_widget(
+                                    Paragraph::new(line.clone())
+                                        .block(Block::default().borders(Borders::NONE)),
+                                    Rect {
+                                        x: text_x,
+                                        y: content_area.y + y_offset + row as u16,
+                                        width: text_w,
+                                        height: 1,
+                                    },
+                                );
+                            }
+                        }
+
+                        y_offset += *height;
+                    }
                 }
             }
 
@@ -868,9 +1029,18 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         let mut text_lines = Vec::new();
                         let mut search_line_map = Vec::new();
                         for (i, dl) in app.lines.iter().enumerate() {
-                            if let DisplayLine::Text(l) = dl {
-                                text_lines.push(l.clone());
-                                search_line_map.push(i);
+                            match dl {
+                                DisplayLine::Text(l) => {
+                                    text_lines.push(l.clone());
+                                    search_line_map.push(i);
+                                }
+                                DisplayLine::InlineImage { side_text, .. } => {
+                                    for l in side_text {
+                                        text_lines.push(l.clone());
+                                        search_line_map.push(i);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         app.search_results = search_lines(&text_lines, &app.search_query);

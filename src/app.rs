@@ -275,25 +275,32 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
     // Preserve leading whitespace on the first output line (indentation, bullet
     // prefixes, heading padding).  Continuation lines after a wrap break start
     // at column 0 and do not inherit the original indent.
+    //
+    // Only unstyled whitespace (bg == None) is treated as a word separator;
+    // whitespace carrying a background colour (e.g. inside Span::Code whose
+    // renderer uses " {t} " with code_bg) is treated as content so that
+    // internal spaces in inline code are never collapsed.
+    let is_sep = |c: char, s: ratatui::style::Style| c.is_whitespace() && s.bg.is_none();
+
     let mut i = 0;
-    while i < chars.len() && chars[i].0.is_whitespace() {
+    while i < chars.len() && is_sep(chars[i].0, chars[i].1) {
         current.push(chars[i]);
         col += 1;
         i += 1;
     }
 
     while i < chars.len() {
-        if chars[i].0.is_whitespace() {
+        if is_sep(chars[i].0, chars[i].1) {
             if col > 0 {
                 // Capture the style of the first whitespace char in this run.
                 pending_space.get_or_insert(chars[i].1);
             }
-            while i < chars.len() && chars[i].0.is_whitespace() {
+            while i < chars.len() && is_sep(chars[i].0, chars[i].1) {
                 i += 1;
             }
         } else {
             let word_start = i;
-            while i < chars.len() && !chars[i].0.is_whitespace() {
+            while i < chars.len() && !is_sep(chars[i].0, chars[i].1) {
                 i += 1;
             }
             let word = &chars[word_start..i];
@@ -1483,6 +1490,26 @@ mod tests {
                 .any(|s| s.style.add_modifier.contains(Modifier::BOLD))
         });
         assert!(has_bold, "bold style must survive wrapping");
+    }
+
+    #[test]
+    fn wrap_line_preserves_styled_whitespace() {
+        // Inline code is rendered as " {t} " with a background colour.
+        // Multi-space content inside the span must survive wrapping unchanged.
+        use ratatui::style::Color;
+        let code_style = Style::default().bg(Color::DarkGray);
+        let line = Line::from(vec![
+            Span::raw("text "),
+            Span::styled(" a  b ", code_style), // two spaces in the middle
+            Span::raw(" more"),
+        ]);
+        let result = wrap_line(line, 80);
+        assert_eq!(result.len(), 1, "short line should not wrap");
+        let text: String = result[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("a  b"),
+            "double space inside code span must be preserved, got: {text:?}"
+        );
     }
 
     // ── image_slot_height ────────────────────────────────────────────────────────

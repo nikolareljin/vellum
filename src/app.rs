@@ -300,18 +300,33 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
             let word_len = word.len();
             let space_cost = if pending_space.is_some() { 1 } else { 0 };
 
-            if col > 0 && col + space_cost + word_len > max_width {
+            // Overflow: flush current line before a normal-width word that
+            // won't fit.  Oversized tokens are handled below — they pack any
+            // existing content (indent, prior words) into the current line
+            // first, so we never emit a content-free leading-indent line.
+            if col > 0 && col + space_cost + word_len > max_width && word_len < max_width {
                 result.push(chars_to_line(std::mem::take(&mut current)));
                 col = 0;
                 pending_space = None;
             }
 
             if word_len >= max_width {
-                // Token wider than terminal — hard-break it.
-                if col > 0 {
+                // Token wider than terminal — hard-break it across lines.
+                // Apply any pending inter-word space first, then pack the
+                // remaining capacity of the current line before hard-breaking.
+                if let Some(sp_style) = pending_space.take() {
+                    current.push((' ', sp_style));
+                    col += 1;
+                }
+                let capacity = max_width.saturating_sub(col);
+                let mut rem = word;
+                if col > 0 && capacity > 0 {
+                    current.extend_from_slice(&rem[..capacity]);
+                    result.push(chars_to_line(std::mem::take(&mut current)));
+                    rem = &rem[capacity..];
+                } else if col > 0 {
                     result.push(chars_to_line(std::mem::take(&mut current)));
                 }
-                let mut rem = word;
                 while rem.len() >= max_width {
                     current.extend_from_slice(&rem[..max_width]);
                     result.push(chars_to_line(std::mem::take(&mut current)));
@@ -386,21 +401,25 @@ fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallbac
     fallback.clamp(1, max_h)
 }
 
-/// Collect hrefs from an element into `links`, using `line_offset` as the
-/// display-line index.  For `Paragraph` elements the per-link offset is
-/// approximated via `char_off / wrap_cols` (within ±1 of the actual
+/// Collect hrefs and heading anchors from an element.  `line_offset` is the
+/// display-line index for this element.  For `Paragraph` elements the per-link
+/// offset is approximated via `char_off / wrap_cols` (within ±1 of the actual
 /// word-boundary break, inside `link_at_line`'s ±1 tolerance).
 /// For nested `List` / `BlockQuote` the offset is advanced per item/element
-/// (same rendering-based counting used in `build_display_lines`) so links
-/// deep inside nested structures get correct offsets.
+/// (same rendering-based counting used in `build_display_lines`) so links and
+/// anchors deep inside nested structures get correct offsets.
 fn collect_element_links(
     el: &Element,
     line_offset: usize,
     wrap_cols: usize,
     theme: &Theme,
     links: &mut Vec<(String, usize)>,
+    anchors: &mut std::collections::HashMap<String, usize>,
 ) {
     match el {
+        Element::Heading { text, .. } => {
+            anchors.insert(anchor_from_heading(text), line_offset);
+        }
         Element::Paragraph(spans) => {
             let mut char_off: usize = 0;
             for span in spans {
@@ -442,7 +461,7 @@ fn collect_element_links(
                 item_disp += item_lines.max(1);
                 let mut el_off = item_start;
                 for item_el in item {
-                    collect_element_links(item_el, el_off, count_wrap, theme, links);
+                    collect_element_links(item_el, el_off, count_wrap, theme, links, anchors);
                     let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                         .iter()
                         .map(|l| wrap_line(l.clone(), count_wrap).len())
@@ -463,7 +482,7 @@ fn collect_element_links(
                     .sum::<usize>()
                     .saturating_sub(1);
                 inner_disp += inner_lines.max(1);
-                collect_element_links(inner_el, inner_start, wrap_cols, theme, links);
+                collect_element_links(inner_el, inner_start, wrap_cols, theme, links, anchors);
             }
         }
         _ => {}
@@ -613,7 +632,14 @@ fn build_display_lines(
                     // get a better offset than just item_start.
                     let mut el_off = item_start;
                     for item_el in item {
-                        collect_element_links(item_el, el_off, count_wrap, theme, &mut doc_links);
+                        collect_element_links(
+                            item_el,
+                            el_off,
+                            count_wrap,
+                            theme,
+                            &mut doc_links,
+                            &mut anchor_map,
+                        );
                         let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                             .iter()
                             .map(|l| wrap_line(l.clone(), count_wrap).len())
@@ -641,7 +667,14 @@ fn build_display_lines(
                         .sum::<usize>()
                         .saturating_sub(1);
                     inner_disp += inner_lines.max(1);
-                    collect_element_links(inner_el, inner_start, wrap_cols, theme, &mut doc_links);
+                    collect_element_links(
+                        inner_el,
+                        inner_start,
+                        wrap_cols,
+                        theme,
+                        &mut doc_links,
+                        &mut anchor_map,
+                    );
                 }
             }
             Element::Paragraph(spans) => {
@@ -690,7 +723,14 @@ fn build_display_lines(
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
-                collect_element_links(el, start_line, wrap_cols, theme, &mut doc_links);
+                collect_element_links(
+                    el,
+                    start_line,
+                    wrap_cols,
+                    theme,
+                    &mut doc_links,
+                    &mut anchor_map,
+                );
             }
         }
     }

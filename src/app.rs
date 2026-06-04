@@ -565,7 +565,44 @@ fn build_display_lines(
                     collect_element_links(inner_el, inner_start, &mut doc_links);
                 }
             }
+            Element::Paragraph(spans) => {
+                let text_lines = render_elements(std::slice::from_ref(el), theme);
+                for l in &text_lines {
+                    for wrapped in wrap_line(l.clone(), term_cols) {
+                        out.push(DisplayLine::Text(wrapped));
+                    }
+                }
+                // Per-link offsets: estimate which wrapped line each link falls on
+                // using its cumulative char offset within the rendered paragraph.
+                // Span::Code renders as " t " (+2 chars); all others render as-is.
+                let mut char_off: usize = 0;
+                for span in spans {
+                    use crate::parser::Span::{
+                        Bold, BoldItalic, Code, Italic, Link, Strikethrough, Text,
+                    };
+                    match span {
+                        Link { href, text } => {
+                            let line_idx = char_off.checked_div(term_cols).unwrap_or(0);
+                            doc_links.push((href.clone(), start_line + line_idx));
+                            char_off += text.chars().count();
+                        }
+                        Code(t) => char_off += t.chars().count() + 2,
+                        Text(t) | Bold(t) | Italic(t) | BoldItalic(t) | Strikethrough(t) => {
+                            char_off += t.chars().count();
+                        }
+                    }
+                }
+            }
+            Element::CodeBlock { .. } | Element::Table { .. } => {
+                // Preformatted blocks — push lines as-is; wrapping collapses
+                // whitespace and corrupts indentation / table alignment.
+                let text_lines = render_elements(std::slice::from_ref(el), theme);
+                for l in text_lines {
+                    out.push(DisplayLine::Text(l));
+                }
+            }
             _ => {
+                // HRule and any future prose elements
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
                     for wrapped in wrap_line(l, term_cols) {

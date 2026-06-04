@@ -366,17 +366,17 @@ fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallbac
         return fallback.clamp(1, max_h);
     }
     if let Ok(size) = imagesize::size(src) {
-        let w = size.width as u32;
-        let h = size.height as u32;
-        let ch = cell_h.max(1) as u32;
+        let w = size.width as u64;
+        let h = size.height as u64;
+        let ch = cell_h.max(1) as u64;
 
         // Constraint 1: natural pixel height → rows.
-        let natural = h.div_ceil(ch) as u16;
+        let natural = h.div_ceil(ch).min(u16::MAX as u64) as u16;
 
         // Constraint 2: when the image is wider than the terminal it is scaled
         // down proportionally; compute the resulting height (assumes 2:1 ratio).
         let width_limited = if w > 0 {
-            (h * term_cols as u32).div_ceil(w * 2) as u16
+            (h * term_cols as u64).div_ceil(w * 2).min(u16::MAX as u64) as u16
         } else {
             natural
         };
@@ -530,15 +530,25 @@ fn build_display_lines(
                 // that per-item start offset.  render_elements appends one trailing
                 // blank line per element; subtract its 1 wrapped line from the count.
                 let mut item_disp = start_line;
-                for item in items {
+                for (item_idx, item) in items.iter().enumerate() {
                     let item_start = item_disp;
                     let single = Element::List {
                         ordered: *ordered,
                         items: vec![item.clone()],
                     };
+                    // Single-item rendering always uses bullet "  1. " (5 chars).
+                    // For ordered lists, the real bullet grows wider for 10+ items
+                    // ("  10. " = 6 chars, etc.).  Compensate by reducing the
+                    // counting wrap width by the extra chars so line breaks match.
+                    let bullet_extra = if *ordered {
+                        format!("  {}. ", item_idx + 1).len().saturating_sub(5)
+                    } else {
+                        0
+                    };
+                    let count_wrap = wrap_cols.saturating_sub(bullet_extra);
                     let item_lines: usize = render_elements(std::slice::from_ref(&single), theme)
                         .iter()
-                        .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                        .map(|l| wrap_line(l.clone(), count_wrap).len())
                         .sum::<usize>()
                         .saturating_sub(1);
                     item_disp += item_lines.max(1);
@@ -550,7 +560,7 @@ fn build_display_lines(
                         collect_element_links(item_el, el_off, &mut doc_links);
                         let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                             .iter()
-                            .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                            .map(|l| wrap_line(l.clone(), count_wrap).len())
                             .sum::<usize>()
                             .saturating_sub(1);
                         el_off += el_lines.max(1);

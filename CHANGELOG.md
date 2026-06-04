@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-06-03
+
+### Fixed
+- Long text lines (paragraphs, list items, blockquotes, headings) now word-wrap at the terminal edge instead of overflowing invisibly to the right. Leading indentation (code-block padding, list bullets, heading prefixes) is preserved on the first line; hard-break fallback handles tokens wider than the terminal width (closes #9).
+- Images no longer insert a blank separator row between themselves and the following text; content appears immediately below with no extra gap (closes #9).
+- Image slot height is now `min(⌈img_h_px / cell_h_px⌉, ⌈img_h_px × cols / (img_w_px × 2)⌉)`, clamped to `[1, max_h]`. `cell_h_px` is the actual terminal row height in pixels from `TIOCGWINSZ` (queried before raw mode; falls back to 16 px). This matches `Resize::Fit`'s no-upscale behaviour and correctly handles images wider than the terminal (closes #9).
+
 ## [0.6.1] — 2026-05-31
 
 ### Added

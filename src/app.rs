@@ -321,9 +321,16 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
                 // Token wider than terminal — hard-break it across lines.
                 // Apply any pending inter-word space first, then pack the
                 // remaining capacity of the current line before hard-breaking.
+                // If the current line is already full (col == max_width),
+                // flush it instead to avoid emitting a max_width+1 char line.
                 if let Some(sp_style) = pending_space.take() {
-                    current.push((' ', sp_style));
-                    col += 1;
+                    if col < max_width {
+                        current.push((' ', sp_style));
+                        col += 1;
+                    } else {
+                        result.push(chars_to_line(std::mem::take(&mut current)));
+                        col = 0;
+                    }
                 }
                 let capacity = max_width.saturating_sub(col);
                 let mut rem = word;

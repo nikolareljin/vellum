@@ -390,11 +390,14 @@ fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallbac
 /// display-line index.  For `Paragraph` elements the per-link offset is
 /// approximated via `char_off / wrap_cols` (within ±1 of the actual
 /// word-boundary break, inside `link_at_line`'s ±1 tolerance).
-/// Recurses into list items and blockquotes.
+/// For nested `List` / `BlockQuote` the offset is advanced per item/element
+/// (same rendering-based counting used in `build_display_lines`) so links
+/// deep inside nested structures get correct offsets.
 fn collect_element_links(
     el: &Element,
     line_offset: usize,
     wrap_cols: usize,
+    theme: &Theme,
     links: &mut Vec<(String, usize)>,
 ) {
     match el {
@@ -417,16 +420,50 @@ fn collect_element_links(
                 }
             }
         }
-        Element::List { items, .. } => {
-            for item in items {
+        Element::List { ordered, items } => {
+            let mut item_disp = line_offset;
+            for (item_idx, item) in items.iter().enumerate() {
+                let item_start = item_disp;
+                let single = Element::List {
+                    ordered: *ordered,
+                    items: vec![item.clone()],
+                };
+                let bullet_extra = if *ordered {
+                    format!("  {}. ", item_idx + 1).len().saturating_sub(5)
+                } else {
+                    0
+                };
+                let count_wrap = wrap_cols.saturating_sub(bullet_extra);
+                let item_lines: usize = render_elements(std::slice::from_ref(&single), theme)
+                    .iter()
+                    .map(|l| wrap_line(l.clone(), count_wrap).len())
+                    .sum::<usize>()
+                    .saturating_sub(1);
+                item_disp += item_lines.max(1);
+                let mut el_off = item_start;
                 for item_el in item {
-                    collect_element_links(item_el, line_offset, wrap_cols, links);
+                    collect_element_links(item_el, el_off, count_wrap, theme, links);
+                    let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
+                        .iter()
+                        .map(|l| wrap_line(l.clone(), count_wrap).len())
+                        .sum::<usize>()
+                        .saturating_sub(1);
+                    el_off += el_lines.max(1);
                 }
             }
         }
         Element::BlockQuote(inner) => {
+            let mut inner_disp = line_offset;
             for inner_el in inner {
-                collect_element_links(inner_el, line_offset, wrap_cols, links);
+                let inner_start = inner_disp;
+                let single = Element::BlockQuote(vec![inner_el.clone()]);
+                let inner_lines: usize = render_elements(std::slice::from_ref(&single), theme)
+                    .iter()
+                    .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                    .sum::<usize>()
+                    .saturating_sub(1);
+                inner_disp += inner_lines.max(1);
+                collect_element_links(inner_el, inner_start, wrap_cols, theme, links);
             }
         }
         _ => {}
@@ -576,7 +613,7 @@ fn build_display_lines(
                     // get a better offset than just item_start.
                     let mut el_off = item_start;
                     for item_el in item {
-                        collect_element_links(item_el, el_off, count_wrap, &mut doc_links);
+                        collect_element_links(item_el, el_off, count_wrap, theme, &mut doc_links);
                         let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                             .iter()
                             .map(|l| wrap_line(l.clone(), count_wrap).len())
@@ -604,7 +641,7 @@ fn build_display_lines(
                         .sum::<usize>()
                         .saturating_sub(1);
                     inner_disp += inner_lines.max(1);
-                    collect_element_links(inner_el, inner_start, wrap_cols, &mut doc_links);
+                    collect_element_links(inner_el, inner_start, wrap_cols, theme, &mut doc_links);
                 }
             }
             Element::Paragraph(spans) => {
@@ -653,7 +690,7 @@ fn build_display_lines(
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
-                collect_element_links(el, start_line, wrap_cols, &mut doc_links);
+                collect_element_links(el, start_line, wrap_cols, theme, &mut doc_links);
             }
         }
     }

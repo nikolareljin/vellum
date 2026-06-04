@@ -363,7 +363,7 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
 /// Result is clamped to `[1, max_h]`.
 fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallback: u16) -> u16 {
     if is_remote_url(src) {
-        return fallback;
+        return fallback.clamp(1, max_h);
     }
     if let Ok(size) = imagesize::size(src) {
         let w = size.width as u32;
@@ -383,7 +383,7 @@ fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallbac
 
         return natural.min(width_limited).clamp(1, max_h);
     }
-    fallback
+    fallback.clamp(1, max_h)
 }
 
 /// Collect hrefs from an element into `links`, using `line_offset` as the
@@ -513,6 +513,57 @@ fn build_display_lines(
                     }
                 }
                 anchor_map.insert(anchor_from_heading(text), start_line);
+            }
+            Element::List { ordered, items } => {
+                // Render full list for display (preserves ordered-list numbering).
+                let text_lines = render_elements(std::slice::from_ref(el), theme);
+                for l in text_lines {
+                    for wrapped in wrap_line(l, term_cols) {
+                        out.push(DisplayLine::Text(wrapped));
+                    }
+                }
+                // Per-item link offsets: render each item as a single-item list
+                // just to count its wrapped display lines, then collect links with
+                // that per-item start offset.  render_elements appends one trailing
+                // blank line per element; subtract its 1 wrapped line from the count.
+                let mut item_disp = start_line;
+                for item in items {
+                    let item_start = item_disp;
+                    let single = Element::List {
+                        ordered: *ordered,
+                        items: vec![item.clone()],
+                    };
+                    let item_lines: usize = render_elements(std::slice::from_ref(&single), theme)
+                        .iter()
+                        .map(|l| wrap_line(l.clone(), term_cols).len())
+                        .sum::<usize>()
+                        .saturating_sub(1);
+                    item_disp += item_lines.max(1);
+                    for item_el in item {
+                        collect_element_links(item_el, item_start, &mut doc_links);
+                    }
+                }
+            }
+            Element::BlockQuote(inner) => {
+                let text_lines = render_elements(std::slice::from_ref(el), theme);
+                for l in text_lines {
+                    for wrapped in wrap_line(l, term_cols) {
+                        out.push(DisplayLine::Text(wrapped));
+                    }
+                }
+                // Per-inner-element link offsets (same counting technique as List).
+                let mut inner_disp = start_line;
+                for inner_el in inner {
+                    let inner_start = inner_disp;
+                    let single = Element::BlockQuote(vec![inner_el.clone()]);
+                    let inner_lines: usize = render_elements(std::slice::from_ref(&single), theme)
+                        .iter()
+                        .map(|l| wrap_line(l.clone(), term_cols).len())
+                        .sum::<usize>()
+                        .saturating_sub(1);
+                    inner_disp += inner_lines.max(1);
+                    collect_element_links(inner_el, inner_start, &mut doc_links);
+                }
             }
             _ => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
@@ -1304,5 +1355,19 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/img/logo.png");
         let h = image_slot_height(path, 20, 16, 40, 99);
         assert_eq!(h, 10, "width-limited at 20 cols overrides natural height");
+    }
+
+    #[test]
+    fn image_slot_height_fallback_clamped_remote() {
+        // fallback=50 > max_h=40: must be clamped to max_h
+        let h = image_slot_height("https://example.com/img.png", 80, 16, 40, 50);
+        assert_eq!(h, 40, "remote fallback must be clamped to max_h");
+    }
+
+    #[test]
+    fn image_slot_height_fallback_clamped_missing() {
+        // fallback=99 > max_h=10: must be clamped to max_h
+        let h = image_slot_height("/nonexistent/img.png", 80, 16, 10, 99);
+        assert_eq!(h, 10, "missing-file fallback must be clamped to max_h");
     }
 }

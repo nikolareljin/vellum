@@ -21,7 +21,7 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
         || lower.starts_with("https://")
         || lower.starts_with("mailto:"))
     {
-        anyhow::bail!("refusing to open non-http(s) url: {}", url);
+        anyhow::bail!("refusing to open url with non-allowed scheme: {}", url);
     }
     if url.starts_with('-') {
         anyhow::bail!("refusing url starting with '-'");

@@ -441,6 +441,9 @@ fn build_display_lines(
     let mut thumb_files = Vec::new();
     let mut doc_links: Vec<(String, usize)> = Vec::new();
     let mut anchor_map: std::collections::HashMap<String, usize> = Default::default();
+    // Reserve the rightmost terminal column for the vertical scrollbar so that
+    // wrapped text and the scroll indicator never overlap.
+    let wrap_cols = term_cols.saturating_sub(1);
 
     for el in elements {
         let start_line = out.len();
@@ -469,7 +472,7 @@ fn build_display_lines(
                 } else {
                     let text_lines = render_elements(std::slice::from_ref(el), theme);
                     for l in text_lines {
-                        for wrapped in wrap_line(l, term_cols) {
+                        for wrapped in wrap_line(l, wrap_cols) {
                             out.push(DisplayLine::Text(wrapped));
                         }
                     }
@@ -498,7 +501,7 @@ fn build_display_lines(
                         // ffmpeg missing or file unreadable — text placeholder
                         let text_lines = render_elements(std::slice::from_ref(el), theme);
                         for l in text_lines {
-                            for wrapped in wrap_line(l, term_cols) {
+                            for wrapped in wrap_line(l, wrap_cols) {
                                 out.push(DisplayLine::Text(wrapped));
                             }
                         }
@@ -508,7 +511,7 @@ fn build_display_lines(
             Element::Heading { text, .. } => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, term_cols) {
+                    for wrapped in wrap_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -518,7 +521,7 @@ fn build_display_lines(
                 // Render full list for display (preserves ordered-list numbering).
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, term_cols) {
+                    for wrapped in wrap_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -535,19 +538,29 @@ fn build_display_lines(
                     };
                     let item_lines: usize = render_elements(std::slice::from_ref(&single), theme)
                         .iter()
-                        .map(|l| wrap_line(l.clone(), term_cols).len())
+                        .map(|l| wrap_line(l.clone(), wrap_cols).len())
                         .sum::<usize>()
                         .saturating_sub(1);
                     item_disp += item_lines.max(1);
+                    // Per-element offsets within the item: accumulate so that links
+                    // in the second (or later) block element of a multi-block item
+                    // get a better offset than just item_start.
+                    let mut el_off = item_start;
                     for item_el in item {
-                        collect_element_links(item_el, item_start, &mut doc_links);
+                        collect_element_links(item_el, el_off, &mut doc_links);
+                        let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
+                            .iter()
+                            .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                            .sum::<usize>()
+                            .saturating_sub(1);
+                        el_off += el_lines.max(1);
                     }
                 }
             }
             Element::BlockQuote(inner) => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, term_cols) {
+                    for wrapped in wrap_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -558,7 +571,7 @@ fn build_display_lines(
                     let single = Element::BlockQuote(vec![inner_el.clone()]);
                     let inner_lines: usize = render_elements(std::slice::from_ref(&single), theme)
                         .iter()
-                        .map(|l| wrap_line(l.clone(), term_cols).len())
+                        .map(|l| wrap_line(l.clone(), wrap_cols).len())
                         .sum::<usize>()
                         .saturating_sub(1);
                     inner_disp += inner_lines.max(1);
@@ -568,13 +581,15 @@ fn build_display_lines(
             Element::Paragraph(spans) => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in &text_lines {
-                    for wrapped in wrap_line(l.clone(), term_cols) {
+                    for wrapped in wrap_line(l.clone(), wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
                 // Per-link offsets: estimate which wrapped line each link falls on
                 // using its cumulative char offset within the rendered paragraph.
                 // Span::Code renders as " t " (+2 chars); all others render as-is.
+                // The approximation is within ±1 line of the exact word-boundary
+                // break, which is within link_at_line's ±1 tolerance.
                 let mut char_off: usize = 0;
                 for span in spans {
                     use crate::parser::Span::{
@@ -582,7 +597,7 @@ fn build_display_lines(
                     };
                     match span {
                         Link { href, text } => {
-                            let line_idx = char_off.checked_div(term_cols).unwrap_or(0);
+                            let line_idx = char_off.checked_div(wrap_cols).unwrap_or(0);
                             doc_links.push((href.clone(), start_line + line_idx));
                             char_off += text.chars().count();
                         }
@@ -605,7 +620,7 @@ fn build_display_lines(
                 // HRule and any future prose elements
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, term_cols) {
+                    for wrapped in wrap_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }

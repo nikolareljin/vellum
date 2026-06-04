@@ -452,19 +452,28 @@ fn collect_element_links(
                 } else {
                     0
                 };
-                let count_wrap = wrap_cols.saturating_sub(bullet_extra);
+                // Narrow only the first rendered line (the bullet line) by
+                // bullet_extra; continuation lines wrap at the full wrap_cols.
                 let item_lines: usize = render_elements(std::slice::from_ref(&single), theme)
                     .iter()
-                    .map(|l| wrap_line(l.clone(), count_wrap).len())
+                    .enumerate()
+                    .map(|(i, l)| {
+                        let w = if i == 0 {
+                            wrap_cols.saturating_sub(bullet_extra)
+                        } else {
+                            wrap_cols
+                        };
+                        wrap_line(l.clone(), w).len()
+                    })
                     .sum::<usize>()
                     .saturating_sub(1);
                 item_disp += item_lines.max(1);
                 let mut el_off = item_start;
                 for item_el in item {
-                    collect_element_links(item_el, el_off, count_wrap, theme, links, anchors);
+                    collect_element_links(item_el, el_off, wrap_cols, theme, links, anchors);
                     let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                         .iter()
-                        .map(|l| wrap_line(l.clone(), count_wrap).len())
+                        .map(|l| wrap_line(l.clone(), wrap_cols).len())
                         .sum::<usize>()
                         .saturating_sub(1);
                     el_off += el_lines.max(1);
@@ -620,10 +629,19 @@ fn build_display_lines(
                     } else {
                         0
                     };
-                    let count_wrap = wrap_cols.saturating_sub(bullet_extra);
+                    // Narrow only the first rendered line (the bullet line) by
+                    // bullet_extra; continuation lines wrap at the full wrap_cols.
                     let item_lines: usize = render_elements(std::slice::from_ref(&single), theme)
                         .iter()
-                        .map(|l| wrap_line(l.clone(), count_wrap).len())
+                        .enumerate()
+                        .map(|(i, l)| {
+                            let w = if i == 0 {
+                                wrap_cols.saturating_sub(bullet_extra)
+                            } else {
+                                wrap_cols
+                            };
+                            wrap_line(l.clone(), w).len()
+                        })
                         .sum::<usize>()
                         .saturating_sub(1);
                     item_disp += item_lines.max(1);
@@ -635,14 +653,14 @@ fn build_display_lines(
                         collect_element_links(
                             item_el,
                             el_off,
-                            count_wrap,
+                            wrap_cols,
                             theme,
                             &mut doc_links,
                             &mut anchor_map,
                         );
                         let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                             .iter()
-                            .map(|l| wrap_line(l.clone(), count_wrap).len())
+                            .map(|l| wrap_line(l.clone(), wrap_cols).len())
                             .sum::<usize>()
                             .saturating_sub(1);
                         el_off += el_lines.max(1);

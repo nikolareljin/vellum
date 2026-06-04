@@ -283,9 +283,14 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
     let is_sep = |c: char, s: ratatui::style::Style| c.is_whitespace() && s.bg.is_none();
 
     let mut i = 0;
-    while i < chars.len() && is_sep(chars[i].0, chars[i].1) {
+    while i < chars.len() && col < max_width && is_sep(chars[i].0, chars[i].1) {
         current.push(chars[i]);
         col += 1;
+        i += 1;
+    }
+    // If the indent is wider than max_width, skip the remaining leading separators
+    // so we never emit a line wider than max_width.
+    while i < chars.len() && is_sep(chars[i].0, chars[i].1) {
         i += 1;
     }
 

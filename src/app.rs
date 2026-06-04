@@ -387,27 +387,46 @@ fn image_slot_height(src: &str, term_cols: u16, cell_h: u16, max_h: u16, fallbac
 }
 
 /// Collect hrefs from an element into `links`, using `line_offset` as the
-/// display-line index.  Recurses into list items and blockquotes so that
-/// links inside those containers also receive a (approximate) offset.
-fn collect_element_links(el: &Element, line_offset: usize, links: &mut Vec<(String, usize)>) {
+/// display-line index.  For `Paragraph` elements the per-link offset is
+/// approximated via `char_off / wrap_cols` (within ±1 of the actual
+/// word-boundary break, inside `link_at_line`'s ±1 tolerance).
+/// Recurses into list items and blockquotes.
+fn collect_element_links(
+    el: &Element,
+    line_offset: usize,
+    wrap_cols: usize,
+    links: &mut Vec<(String, usize)>,
+) {
     match el {
         Element::Paragraph(spans) => {
+            let mut char_off: usize = 0;
             for span in spans {
-                if let crate::parser::Span::Link { href, .. } = span {
-                    links.push((href.clone(), line_offset));
+                use crate::parser::Span::{
+                    Bold, BoldItalic, Code, Italic, Link, Strikethrough, Text,
+                };
+                match span {
+                    Link { href, text } => {
+                        let line_idx = char_off.checked_div(wrap_cols).unwrap_or(0);
+                        links.push((href.clone(), line_offset + line_idx));
+                        char_off += text.chars().count();
+                    }
+                    Code(t) => char_off += t.chars().count() + 2,
+                    Text(t) | Bold(t) | Italic(t) | BoldItalic(t) | Strikethrough(t) => {
+                        char_off += t.chars().count();
+                    }
                 }
             }
         }
         Element::List { items, .. } => {
             for item in items {
                 for item_el in item {
-                    collect_element_links(item_el, line_offset, links);
+                    collect_element_links(item_el, line_offset, wrap_cols, links);
                 }
             }
         }
         Element::BlockQuote(inner) => {
             for inner_el in inner {
-                collect_element_links(inner_el, line_offset, links);
+                collect_element_links(inner_el, line_offset, wrap_cols, links);
             }
         }
         _ => {}
@@ -557,7 +576,7 @@ fn build_display_lines(
                     // get a better offset than just item_start.
                     let mut el_off = item_start;
                     for item_el in item {
-                        collect_element_links(item_el, el_off, &mut doc_links);
+                        collect_element_links(item_el, el_off, count_wrap, &mut doc_links);
                         let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                             .iter()
                             .map(|l| wrap_line(l.clone(), count_wrap).len())
@@ -585,7 +604,7 @@ fn build_display_lines(
                         .sum::<usize>()
                         .saturating_sub(1);
                     inner_disp += inner_lines.max(1);
-                    collect_element_links(inner_el, inner_start, &mut doc_links);
+                    collect_element_links(inner_el, inner_start, wrap_cols, &mut doc_links);
                 }
             }
             Element::Paragraph(spans) => {
@@ -634,7 +653,7 @@ fn build_display_lines(
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
-                collect_element_links(el, start_line, &mut doc_links);
+                collect_element_links(el, start_line, wrap_cols, &mut doc_links);
             }
         }
     }
@@ -734,10 +753,10 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     // Query terminal dimensions before raw mode so build_display_lines can
     // size image slots correctly.  Falls back to 80×24 if unavailable.
     //
-    // Resize::Fit in ratatui-image never upscales — it only scales down.
-    // The correct slot height is ceil(img_h_px / cell_h_px): exactly as many
-    // rows as the image needs at native pixel size.  window_size() returns
-    // actual pixel dimensions via TIOCGWINSZ (works before raw mode).
+    // image_slot_height() takes the minimum of two constraints:
+    //   1. natural height:    ceil(img_h_px / cell_h_px)
+    //   2. width-limited:     ceil(img_h_px × cols / (img_w_px × 2))
+    // window_size() supplies cell_h_px via TIOCGWINSZ (works before raw mode).
     let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let cell_h: u16 = crossterm::terminal::window_size()
         .ok()

@@ -147,13 +147,12 @@ fn extract_img_tag(html: &str) -> Option<(String, String)> {
             // HTML comment: skip the whole block.
             if bytes[i..].starts_with(b"<!--") {
                 let after_open = i + 4;
-                match bytes[after_open..].windows(3).position(|w| w == b"-->") {
-                    Some(end_rel) => {
-                        i = after_open + end_rel + 3;
-                        continue;
-                    }
-                    None => return None, // unterminated comment
-                }
+                // `?` here returns None from the enclosing function, which is
+                // the unterminated-comment case: no closing `-->` means there
+                // is no image to find.
+                let end_rel = bytes[after_open..].windows(3).position(|w| w == b"-->")?;
+                i = after_open + end_rel + 3;
+                continue;
             }
             if bytes[i] != b'<' {
                 i += 1;

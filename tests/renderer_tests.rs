@@ -106,11 +106,13 @@ fn test_heading_h1_uses_theme_color() {
     use ratatui::style::Color;
     use vellum::theme::{HeadingColors, Rgb};
 
-    let mut theme = Theme::default();
-    // Override h1 to bright red
-    theme.headings = HeadingColors {
-        h1: Rgb(255, 0, 0),
-        ..HeadingColors::default()
+    // h1 overridden to bright red; everything else default.
+    let theme = Theme {
+        headings: HeadingColors {
+            h1: Rgb(255, 0, 0),
+            ..HeadingColors::default()
+        },
+        ..Theme::default()
     };
     let el = Element::Heading {
         level: 1,

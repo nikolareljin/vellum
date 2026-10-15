@@ -882,9 +882,8 @@ impl CodeBlockRef {
     }
 
     /// Text that goes to the clipboard: the block minus the final newline and
-    /// minus control characters other than tab and newline.  Those do not show
-    /// on screen (ESC sequences, CR overwrites), so copying them would paste
-    /// something other than what the reader saw, e.g. a hidden command in a shell.
+    /// minus `is_hidden_control` characters, so the paste is what the reader
+    /// saw, not e.g. a command hidden behind an ESC sequence.
     pub fn copy_text(&self) -> String {
         self.raw()
             .chars()
@@ -902,8 +901,12 @@ impl CodeBlockRef {
     }
 }
 
+/// Characters that change what a pasted line does without showing on screen:
+/// C0/C1 controls (ESC sequences, CR overwrites) and the bidi embedding,
+/// override and isolate marks used to reorder source text ("Trojan Source").
 fn is_hidden_control(c: char) -> bool {
-    c.is_control() && c != '\n' && c != '\t'
+    (c.is_control() && c != '\n' && c != '\t')
+        || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// Every fenced code block in document order, including those nested in
@@ -2230,6 +2233,14 @@ mod tests {
         };
         assert_eq!(b.copy_text(), "echo safe[2Krm -rf ~\n\tok");
         assert_eq!(b.hidden_controls(), 2);
+        let bidi = CodeBlockRef {
+            code: "x = \u{202E}1 // \u{2066}y\u{2069} \u{200D}\n".into(),
+            lang: None,
+            header: 0,
+            end: 0,
+        };
+        assert_eq!(bidi.copy_text(), "x = 1 // y \u{200D}");
+        assert_eq!(bidi.hidden_controls(), 3);
     }
 
     #[test]

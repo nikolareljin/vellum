@@ -1,23 +1,50 @@
 //! System clipboard access without extra crates.
 //!
-//! Tries the platform clipboard tools in order and falls back to an OSC 52
-//! escape sequence, which most modern terminals (kitty, WezTerm, iTerm2,
-//! foot, tmux with `set-clipboard on`) turn into a clipboard write, also over SSH.
+//! Locally, tries the platform clipboard tools and falls back to an OSC 52
+//! escape sequence, which most terminals (kitty, WezTerm, iTerm2, foot,
+//! Windows Terminal, xterm with allowWindowOps) turn into a clipboard write.
+//!
+//! Over SSH only OSC 52 is used: a tool on the remote host (xclip with X
+//! forwarding, a desktop session's wl-copy) would fill the remote clipboard,
+//! not the one on the machine the user is typing at.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 /// Copy `text` to the system clipboard.  Returns the name of the method used.
 pub fn copy(text: &str) -> anyhow::Result<&'static str> {
-    for (tool, args) in candidate_tools() {
-        if which_exists(tool) && pipe_to(tool, args, text).is_ok() {
-            return Ok(tool);
+    if !is_ssh_session() {
+        for (tool, args) in candidate_tools() {
+            if which_exists(tool) && pipe_to(tool, args, text).is_ok() {
+                return Ok(tool);
+            }
         }
     }
+    let in_tmux = std::env::var_os("TMUX").is_some();
     let mut out = std::io::stdout();
-    out.write_all(osc52_sequence(text).as_bytes())?;
+    out.write_all(osc52_output(text, in_tmux).as_bytes())?;
     out.flush()?;
-    Ok("OSC 52")
+    Ok(if in_tmux { "OSC 52 (tmux)" } else { "OSC 52" })
+}
+
+fn is_ssh_session() -> bool {
+    ["SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some())
+}
+
+/// The bytes to write for an OSC 52 copy.  Inside tmux the plain sequence
+/// reaches the outer terminal when `set-clipboard on`; the DCS passthrough
+/// form reaches it when `allow-passthrough on`.  Both carry the same text, so
+/// sending both works with either setting.
+pub fn osc52_output(text: &str, in_tmux: bool) -> String {
+    let seq = osc52_sequence(text);
+    if in_tmux {
+        let wrapped = seq.replace('\x1b', "\x1b\x1b");
+        format!("{seq}\x1bPtmux;{wrapped}\x1b\\")
+    } else {
+        seq
+    }
 }
 
 fn candidate_tools() -> Vec<(&'static str, &'static [&'static str])> {
@@ -111,6 +138,15 @@ mod tests {
         assert_eq!(base64(b"foob"), "Zm9vYg==");
         assert_eq!(base64(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn osc52_tmux_adds_passthrough_copy() {
+        assert_eq!(osc52_output("a", false), "\x1b]52;c;YQ==\x07");
+        assert_eq!(
+            osc52_output("a", true),
+            "\x1b]52;c;YQ==\x07\x1bPtmux;\x1b\x1b]52;c;YQ==\x07\x1b\\"
+        );
     }
 
     #[test]

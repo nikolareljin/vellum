@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` or a mouse click, then copy with `y`/`Enter` or a click on its label. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Falls back to OSC 52 when no clipboard tool is installed (closes #15).
+- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` or a mouse click, then copy with `y`/`Enter` or a click on its label. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Falls back to OSC 52 when no clipboard tool is installed, and always uses OSC 52 over SSH so the copy reaches the local clipboard (closes #15).
 
 ## [0.6.2] — 2026-06-03
 

@@ -136,9 +136,12 @@ vellum --theme dracula <file> # open file with a specific theme
 
 Copying is two steps, select then confirm, so a stray key or click never
 overwrites the clipboard. The last copied block stays marked `[copied]`.
-vellum uses `wl-copy`, `xclip`, `xsel`, `pbcopy` or `clip.exe` when present,
-else the OSC 52 escape sequence (kitty, WezTerm, iTerm2, foot, tmux with
-`set-clipboard on`; also works over SSH).
+Locally vellum uses `wl-copy`, `xclip`, `xsel`, `pbcopy` or `clip.exe` when
+present, else the OSC 52 escape sequence. Over SSH it always uses OSC 52, so
+the text lands in the clipboard of the machine you type at. The terminal must
+allow OSC 52 (kitty, WezTerm, iTerm2, foot, Windows Terminal do; xterm needs
+`allowWindowOps`). In tmux set `set -g set-clipboard on` or
+`set -g allow-passthrough on`.
 
 ## Development
 

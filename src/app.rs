@@ -239,17 +239,23 @@ impl App {
     fn copy_selected(&mut self, copy: impl FnOnce(&str) -> anyhow::Result<&'static str>) {
         let Some(i) = self.code_cursor else { return };
         let block = &self.code_blocks[i];
-        let msg = match copy(block.copy_text()) {
+        let msg = match copy(&block.copy_text()) {
             Ok(method) => {
                 self.copied_block = Some(i);
                 let n = block.line_count();
+                let hidden = block.hidden_controls();
                 format!(
-                    "copied code block {}/{} ({} line{}) to clipboard via {}",
+                    "copied code block {}/{} ({} line{}) to clipboard via {}{}",
                     i + 1,
                     self.code_blocks.len(),
                     n,
                     if n == 1 { "" } else { "s" },
-                    method
+                    method,
+                    if hidden > 0 {
+                        format!(", {hidden} hidden control character(s) removed")
+                    } else {
+                        String::new()
+                    }
                 )
             }
             Err(e) => format!("copy failed: {e}"),
@@ -871,14 +877,33 @@ pub struct CodeBlockRef {
 }
 
 impl CodeBlockRef {
-    /// Text that goes to the clipboard: the block verbatim, minus the final newline.
-    pub fn copy_text(&self) -> &str {
+    fn raw(&self) -> &str {
         self.code.strip_suffix('\n').unwrap_or(&self.code)
     }
 
-    pub fn line_count(&self) -> usize {
-        self.copy_text().lines().count().max(1)
+    /// Text that goes to the clipboard: the block minus the final newline and
+    /// minus control characters other than tab and newline.  Those do not show
+    /// on screen (ESC sequences, CR overwrites), so copying them would paste
+    /// something other than what the reader saw, e.g. a hidden command in a shell.
+    pub fn copy_text(&self) -> String {
+        self.raw()
+            .chars()
+            .filter(|&c| !is_hidden_control(c))
+            .collect()
     }
+
+    /// Number of control characters `copy_text` drops.
+    pub fn hidden_controls(&self) -> usize {
+        self.raw().chars().filter(|&c| is_hidden_control(c)).count()
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.raw().lines().count().max(1)
+    }
+}
+
+fn is_hidden_control(c: char) -> bool {
+    c.is_control() && c != '\n' && c != '\t'
 }
 
 /// Every fenced code block in document order, including those nested in
@@ -898,8 +923,16 @@ fn collect_code_sources(elements: &[Element], out: &mut Vec<(String, Option<Stri
     }
 }
 
+/// The header bar: the `COPY_LABEL` span as the renderer styles it (dim, on
+/// the header background), so the same text in prose or code never matches.
+fn is_copy_label(span: &Span<'_>) -> bool {
+    span.content == COPY_LABEL
+        && span.style.bg.is_some()
+        && span.style.add_modifier.contains(Modifier::DIM)
+}
+
 fn is_header_line(line: &Line<'_>) -> bool {
-    line.spans.iter().any(|s| s.content == COPY_LABEL)
+    line.spans.iter().any(is_copy_label)
 }
 
 /// The bottom rule of a code block: a run of `─` with no background.
@@ -923,7 +956,16 @@ fn locate_code_blocks(elements: &[Element], lines: &[DisplayLine]) -> Vec<CodeBl
     let headers: Vec<usize> = (0..lines.len())
         .filter(|&i| text(i).is_some_and(is_header_line))
         .collect();
-    debug_assert_eq!(headers.len(), sources.len(), "code block header count");
+    if headers.len() != sources.len() {
+        // Pairing by order would hand out the wrong text; offer no copy instead.
+        debug_assert!(
+            false,
+            "code block headers {} != blocks {}",
+            headers.len(),
+            sources.len()
+        );
+        return Vec::new();
+    }
     sources
         .into_iter()
         .zip(headers)
@@ -987,6 +1029,7 @@ fn code_click(
     blocks: &[CodeBlockRef],
     lines: &[DisplayLine],
     selected: Option<usize>,
+    copied: Option<usize>,
     entry: usize,
     col: usize,
 ) -> CodeClick {
@@ -995,7 +1038,12 @@ fn code_click(
     };
     if selected == Some(i) && entry == blocks[i].header {
         if let Some(DisplayLine::Text(line)) = lines.get(entry) {
-            if let Some((start, width)) = label_columns(line) {
+            let label = if copied == Some(i) {
+                COPIED_SELECTED_LABEL
+            } else {
+                SELECTED_LABEL
+            };
+            if let Some((start, width)) = label_columns(line, label) {
                 if (start..start + width).contains(&col) {
                     return CodeClick::Copy(i);
                 }
@@ -1005,16 +1053,15 @@ fn code_click(
     CodeClick::Select(i)
 }
 
-/// Column range of the copy label on a header line, as rendered (undecorated).
-/// The decorated label is wider; it grows leftwards into the padding, so the
-/// range is widened to match what the user sees.
-fn label_columns(line: &Line<'_>) -> Option<(usize, usize)> {
-    let idx = line.spans.iter().position(|s| s.content == COPY_LABEL)?;
+/// Column range of `label` drawn over the copy label of an undecorated header
+/// line.  Decorated labels are wider and grow leftwards into the padding.
+fn label_columns(line: &Line<'_>, label: &str) -> Option<(usize, usize)> {
+    let idx = line.spans.iter().position(is_copy_label)?;
     let end: usize = line.spans[..=idx]
         .iter()
         .map(|s| s.content.chars().count())
         .sum();
-    let width = SELECTED_LABEL.chars().count();
+    let width = label.chars().count();
     Some((end.saturating_sub(width), width))
 }
 
@@ -1048,7 +1095,7 @@ fn decorate_code_line(
             CodeState::Copied => COPIED_LABEL,
             CodeState::SelectedCopied => COPIED_SELECTED_LABEL,
         };
-        if let Some(idx) = line.spans.iter().position(|s| s.content == COPY_LABEL) {
+        if let Some(idx) = line.spans.iter().position(is_copy_label) {
             // Keep the bar width: the wider label takes columns from the padding.
             let grow = label.chars().count().saturating_sub(COPY_LABEL.len());
             if idx > 0 {
@@ -1747,6 +1794,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             &app.code_blocks,
                             &app.lines,
                             app.code_cursor,
+                            app.copied_block,
                             clicked_line,
                             mouse.column as usize,
                         ) {
@@ -1980,7 +2028,7 @@ mod tests {
     #[test]
     fn locate_code_blocks_finds_top_level_and_nested() {
         let (lines, blocks) = code_doc();
-        let codes: Vec<&str> = blocks.iter().map(|b| b.copy_text()).collect();
+        let codes: Vec<String> = blocks.iter().map(|b| b.copy_text()).collect();
         assert_eq!(codes, ["print(1)\nprint(2)", "nested", "fn main() {}"]);
         assert_eq!(blocks[0].lang.as_deref(), Some("python"));
         for b in &blocks {
@@ -2019,38 +2067,41 @@ mod tests {
         let (lines, blocks) = code_doc();
         let b = &blocks[0];
         let (label_col, _) = match &lines[b.header] {
-            DisplayLine::Text(l) => label_columns(l).unwrap(),
+            DisplayLine::Text(l) => label_columns(l, SELECTED_LABEL).unwrap(),
             _ => unreachable!(),
         };
         let label_col = label_col + SELECTED_LABEL.len() - 1;
         // Unselected: any click, even on the label, only selects.
         assert_eq!(
-            code_click(&blocks, &lines, None, b.header, label_col),
+            code_click(&blocks, &lines, None, None, b.header, label_col),
             CodeClick::Select(0)
         );
         assert_eq!(
-            code_click(&blocks, &lines, Some(1), b.header + 1, 3),
+            code_click(&blocks, &lines, Some(1), None, b.header + 1, 3),
             CodeClick::Select(0)
         );
         assert_eq!(
-            code_click(&blocks, &lines, None, b.end, 0),
+            code_click(&blocks, &lines, None, None, b.end, 0),
             CodeClick::Select(0)
         );
         // Selected: label copies, elsewhere keeps it selected.
         assert_eq!(
-            code_click(&blocks, &lines, Some(0), b.header, label_col),
+            code_click(&blocks, &lines, Some(0), None, b.header, label_col),
             CodeClick::Copy(0)
         );
         assert_eq!(
-            code_click(&blocks, &lines, Some(0), b.header, 0),
+            code_click(&blocks, &lines, Some(0), None, b.header, 0),
             CodeClick::Select(0)
         );
         assert_eq!(
-            code_click(&blocks, &lines, Some(0), b.header + 1, label_col),
+            code_click(&blocks, &lines, Some(0), None, b.header + 1, label_col),
             CodeClick::Select(0)
         );
         // Outside any block.
-        assert_eq!(code_click(&blocks, &lines, Some(0), 0, 0), CodeClick::Miss);
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, 0, 0),
+            CodeClick::Miss
+        );
     }
 
     #[test]
@@ -2137,5 +2188,47 @@ mod tests {
             "failed copy keeps the previous mark"
         );
         assert!(app.flash.as_ref().unwrap().0.starts_with("copy failed"));
+    }
+
+    #[test]
+    fn literal_copy_text_is_not_a_code_block_header() {
+        let doc = "[copy]\n\nSee `[copy]` and [copy] here.\n\n```\n[copy]\n```\n";
+        let elements = parser::parse(doc);
+        let theme = Theme::default();
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &theme, 100, 16, 10, 5);
+        let blocks = locate_code_blocks(&elements, &lines);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].copy_text(), "[copy]");
+        assert!(text_of(&lines, blocks[0].header).contains("TEXT"));
+    }
+
+    #[test]
+    fn copied_and_selected_label_is_clickable_across_its_width() {
+        let (lines, blocks) = code_doc();
+        let DisplayLine::Text(l) = &lines[blocks[0].header] else {
+            unreachable!()
+        };
+        let (start, _) = label_columns(l, COPIED_SELECTED_LABEL).unwrap();
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), Some(0), blocks[0].header, start),
+            CodeClick::Copy(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, blocks[0].header, start),
+            CodeClick::Select(0)
+        );
+    }
+
+    #[test]
+    fn copy_text_drops_hidden_control_characters() {
+        let b = CodeBlockRef {
+            code: "echo safe\r\x1b[2Krm -rf ~\n\tok\n".into(),
+            lang: None,
+            header: 0,
+            end: 0,
+        };
+        assert_eq!(b.copy_text(), "echo safe[2Krm -rf ~\n\tok");
+        assert_eq!(b.hidden_controls(), 2);
     }
 }

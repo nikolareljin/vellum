@@ -124,12 +124,21 @@ vellum --theme dracula <file> # open file with a specific theme
 | `a` | About page |
 | `e` | Code view (spawns `$EDITOR` / `bat` / `less`) |
 | `Tab` / `Shift+Tab` | Cycle links |
+| `c` / `C` | Select next / previous code block |
+| `y` / `Enter` | Copy the selected code block to the clipboard |
 | `Enter` | Follow link / confirm search |
 | `/` | Open incremental search |
 | `n` / `N` | Next / previous match |
-| `Esc` | Clear search |
+| `Esc` | Clear search, deselect link or code block |
 | `q` / `Ctrl+C` | Quit |
 | Mouse scroll | Scroll 3 lines |
+| Click a code block | Select it; click its `[ y: copy ]` label to copy |
+
+Copying is two steps, select then confirm, so a stray key or click never
+overwrites the clipboard. The last copied block stays marked `[copied]`.
+vellum uses `wl-copy`, `xclip`, `xsel`, `pbcopy` or `clip.exe` when present,
+else the OSC 52 escape sequence (kitty, WezTerm, iTerm2, foot, tmux with
+`set-clipboard on`; also works over SSH).
 
 ## Development
 

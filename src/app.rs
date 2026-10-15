@@ -10,7 +10,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -20,12 +20,13 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
+use crate::clipboard::which_exists;
 use crate::image::{is_remote_url, safe_error_url, ImageCache};
 use crate::links::{anchor_from_heading, open_url};
 use crate::parser::{self, Element};
-use crate::renderer::render_elements;
+use crate::renderer::{render_elements, COPY_LABEL};
 use crate::search::{search_lines, SearchResult};
-use crate::theme::Theme;
+use crate::theme::{CodeColors, Theme};
 use crate::video::extract_thumbnail;
 
 // ── Navigation history ────────────────────────────────────────────────────────
@@ -108,6 +109,14 @@ struct App {
     /// (href, rendered-line-offset)
     doc_links: Vec<(String, usize)>,
     link_cursor: Option<usize>,
+    /// Fenced code blocks in display order.
+    code_blocks: Vec<CodeBlockRef>,
+    /// Selected code block (`c`/`C` or click).  Exclusive with `link_cursor`.
+    code_cursor: Option<usize>,
+    /// Last block copied to the clipboard; stays marked until another copy.
+    copied_block: Option<usize>,
+    /// One-off status message (copy result) and when it was set.
+    flash: Option<(String, std::time::Instant)>,
     anchor_map: std::collections::HashMap<String, usize>,
     /// Keep temp files alive for the session (drop = delete)
     _thumb_files: Vec<tempfile::NamedTempFile>,
@@ -135,6 +144,7 @@ impl App {
         lines: Vec<DisplayLine>,
         picker: Picker,
         doc_links: Vec<(String, usize)>,
+        code_blocks: Vec<CodeBlockRef>,
         anchor_map: std::collections::HashMap<String, usize>,
         thumb_files: Vec<tempfile::NamedTempFile>,
     ) -> Self {
@@ -148,6 +158,10 @@ impl App {
             image_cache: Default::default(),
             doc_links,
             link_cursor: None,
+            code_blocks,
+            code_cursor: None,
+            copied_block: None,
+            flash: None,
             anchor_map,
             _thumb_files: thumb_files,
             search_mode: false,
@@ -210,6 +224,53 @@ impl App {
     fn goto_top(&mut self) {
         self.scroll = 0;
     }
+    /// Select code block `i`; clears any focused link.  With `reveal`, scroll
+    /// so the header is visible if it is not already.
+    fn select_code(&mut self, i: usize, reveal: bool) {
+        self.code_cursor = Some(i);
+        self.link_cursor = None;
+        let header = self.code_blocks[i].header;
+        if reveal && !(self.scroll..self.scroll + self.viewport_height.max(1)).contains(&header) {
+            self.scroll = header.min(self.max_scroll());
+        }
+    }
+
+    /// Copy the selected block to the clipboard and report the result.
+    fn copy_selected(&mut self, copy: impl FnOnce(&str) -> anyhow::Result<&'static str>) {
+        let Some(i) = self.code_cursor else { return };
+        let block = &self.code_blocks[i];
+        let msg = match copy(block.copy_text()) {
+            Ok(method) => {
+                self.copied_block = Some(i);
+                let n = block.line_count();
+                format!(
+                    "copied code block {}/{} ({} line{}) to clipboard via {}",
+                    i + 1,
+                    self.code_blocks.len(),
+                    n,
+                    if n == 1 { "" } else { "s" },
+                    method
+                )
+            }
+            Err(e) => format!("copy failed: {e}"),
+        };
+        self.flash = Some((msg, std::time::Instant::now()));
+    }
+
+    /// Display line `idx`, restyled when it belongs to a selected or copied block.
+    fn display_text(&self, idx: usize, line: &Line<'static>, code: &CodeColors) -> Line<'static> {
+        let Some(b) = code_block_at(&self.code_blocks, idx) else {
+            return line.clone();
+        };
+        let state = match (self.code_cursor == Some(b), self.copied_block == Some(b)) {
+            (true, true) => CodeState::SelectedCopied,
+            (true, false) => CodeState::Selected,
+            (false, true) => CodeState::Copied,
+            (false, false) => return line.clone(),
+        };
+        decorate_code_line(line, state, idx == self.code_blocks[b].header, code)
+    }
+
     fn goto_bottom(&mut self) {
         self.scroll = self.max_scroll();
     }
@@ -796,6 +857,239 @@ fn follow_link(href: &str, file: &Path) -> Option<std::path::PathBuf> {
     None
 }
 
+// ── Code blocks: select and copy ──────────────────────────────────────────────
+
+/// A rendered fenced code block: its source and the display lines it spans.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodeBlockRef {
+    pub code: String,
+    pub lang: Option<String>,
+    /// Display-line index of the header bar (the one holding `COPY_LABEL`).
+    pub header: usize,
+    /// Display-line index of the bottom rule (inclusive end of the block).
+    pub end: usize,
+}
+
+impl CodeBlockRef {
+    /// Text that goes to the clipboard: the block verbatim, minus the final newline.
+    pub fn copy_text(&self) -> &str {
+        self.code.strip_suffix('\n').unwrap_or(&self.code)
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.copy_text().lines().count().max(1)
+    }
+}
+
+/// Every fenced code block in document order, including those nested in
+/// lists and block quotes.  Matches the order their header bars are rendered in.
+fn collect_code_sources(elements: &[Element], out: &mut Vec<(String, Option<String>)>) {
+    for el in elements {
+        match el {
+            Element::CodeBlock { lang, code } => out.push((code.clone(), lang.clone())),
+            Element::List { items, .. } => {
+                for item in items {
+                    collect_code_sources(item, out);
+                }
+            }
+            Element::BlockQuote(inner) => collect_code_sources(inner, out),
+            _ => {}
+        }
+    }
+}
+
+fn is_header_line(line: &Line<'_>) -> bool {
+    line.spans.iter().any(|s| s.content == COPY_LABEL)
+}
+
+/// The bottom rule of a code block: a run of `─` with no background.
+/// Code text never matches because highlighted spans always carry a background.
+fn is_rule_line(line: &Line<'_>) -> bool {
+    line.spans.iter().any(|s| {
+        s.style.bg.is_none()
+            && s.content.chars().count() >= 8
+            && s.content.chars().all(|c| c == '─')
+    })
+}
+
+/// Locate each code block's header and bottom rule in the display lines.
+fn locate_code_blocks(elements: &[Element], lines: &[DisplayLine]) -> Vec<CodeBlockRef> {
+    let mut sources = Vec::new();
+    collect_code_sources(elements, &mut sources);
+    let text = |i: usize| match &lines[i] {
+        DisplayLine::Text(l) => Some(l),
+        DisplayLine::Image { .. } => None,
+    };
+    let headers: Vec<usize> = (0..lines.len())
+        .filter(|&i| text(i).is_some_and(is_header_line))
+        .collect();
+    debug_assert_eq!(headers.len(), sources.len(), "code block header count");
+    sources
+        .into_iter()
+        .zip(headers)
+        .map(|((code, lang), header)| {
+            let end = (header + 1..lines.len())
+                .find(|&i| text(i).is_some_and(is_rule_line))
+                .unwrap_or(header);
+            CodeBlockRef {
+                code,
+                lang,
+                header,
+                end,
+            }
+        })
+        .collect()
+}
+
+/// Index of the block that contains display line `entry`.
+fn code_block_at(blocks: &[CodeBlockRef], entry: usize) -> Option<usize> {
+    blocks
+        .iter()
+        .position(|b| (b.header..=b.end).contains(&entry))
+}
+
+/// Next (or previous) block for `c` / `C`.  With nothing selected, start from
+/// the first block that reaches the top of the viewport (or the last one above
+/// it when going backwards), so the first press lands on something visible.
+fn step_code_block(
+    blocks: &[CodeBlockRef],
+    current: Option<usize>,
+    forward: bool,
+    scroll: usize,
+) -> Option<usize> {
+    let n = blocks.len();
+    if n == 0 {
+        return None;
+    }
+    Some(match (current, forward) {
+        (Some(i), true) => (i + 1) % n,
+        (Some(i), false) => (i + n - 1) % n,
+        (None, true) => blocks.iter().position(|b| b.end >= scroll).unwrap_or(0),
+        (None, false) => blocks
+            .iter()
+            .rposition(|b| b.header < scroll)
+            .unwrap_or(n - 1),
+    })
+}
+
+/// What a left click on display line `entry`, terminal column `col` does.
+#[derive(Debug, PartialEq)]
+enum CodeClick {
+    /// Not on a code block.
+    Miss,
+    /// Select block i.  Nothing is copied.
+    Select(usize),
+    /// Copy block i: a click on the label of the block that is already selected.
+    Copy(usize),
+}
+
+fn code_click(
+    blocks: &[CodeBlockRef],
+    lines: &[DisplayLine],
+    selected: Option<usize>,
+    entry: usize,
+    col: usize,
+) -> CodeClick {
+    let Some(i) = code_block_at(blocks, entry) else {
+        return CodeClick::Miss;
+    };
+    if selected == Some(i) && entry == blocks[i].header {
+        if let Some(DisplayLine::Text(line)) = lines.get(entry) {
+            if let Some((start, width)) = label_columns(line) {
+                if (start..start + width).contains(&col) {
+                    return CodeClick::Copy(i);
+                }
+            }
+        }
+    }
+    CodeClick::Select(i)
+}
+
+/// Column range of the copy label on a header line, as rendered (undecorated).
+/// The decorated label is wider; it grows leftwards into the padding, so the
+/// range is widened to match what the user sees.
+fn label_columns(line: &Line<'_>) -> Option<(usize, usize)> {
+    let idx = line.spans.iter().position(|s| s.content == COPY_LABEL)?;
+    let end: usize = line.spans[..=idx]
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum();
+    let width = SELECTED_LABEL.chars().count();
+    Some((end.saturating_sub(width), width))
+}
+
+const SELECTED_LABEL: &str = "[ y: copy ]";
+const COPIED_LABEL: &str = "[copied]";
+const COPIED_SELECTED_LABEL: &str = "[copied - y: copy again]";
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CodeState {
+    Selected,
+    Copied,
+    SelectedCopied,
+}
+
+/// Restyle one display line of a code block for its state.  Header: label text
+/// and bar colour.  Body: a coloured gutter bar.  Bottom rule: colour.
+fn decorate_code_line(
+    line: &Line<'static>,
+    state: CodeState,
+    is_header: bool,
+    code: &CodeColors,
+) -> Line<'static> {
+    let accent = match state {
+        CodeState::Copied => Color::Green,
+        CodeState::Selected | CodeState::SelectedCopied => Color::Yellow,
+    };
+    let mut line = line.clone();
+    if is_header {
+        let label = match state {
+            CodeState::Selected => SELECTED_LABEL,
+            CodeState::Copied => COPIED_LABEL,
+            CodeState::SelectedCopied => COPIED_SELECTED_LABEL,
+        };
+        if let Some(idx) = line.spans.iter().position(|s| s.content == COPY_LABEL) {
+            // Keep the bar width: the wider label takes columns from the padding.
+            let grow = label.chars().count().saturating_sub(COPY_LABEL.len());
+            if idx > 0 {
+                let pad = line.spans[idx - 1].content.chars().count();
+                line.spans[idx - 1].content = " ".repeat(pad.saturating_sub(grow).max(1)).into();
+            }
+            line.spans[idx].content = label.into();
+            line.spans[idx].style = Style::default()
+                .fg(Color::Black)
+                .bg(accent)
+                .add_modifier(Modifier::BOLD);
+        }
+        if state != CodeState::Copied {
+            let header_bg = code.header_bg.to_color();
+            for span in &mut line.spans {
+                if span.style.bg == Some(header_bg) {
+                    span.style = span.style.bg(Color::DarkGray);
+                }
+            }
+        }
+    } else if is_rule_line(&line) {
+        for span in &mut line.spans {
+            if span.style.bg.is_none() && span.content.chars().all(|c| c == '─') {
+                span.style = span.style.fg(accent);
+            }
+        }
+    } else {
+        // Body: the 2-column left gutter is the first span on the code background.
+        let code_bg = code.bg.to_color();
+        if let Some(span) = line
+            .spans
+            .iter_mut()
+            .find(|s| s.content == "  " && s.style.bg == Some(code_bg))
+        {
+            span.content = "▌ ".into();
+            span.style = span.style.fg(accent);
+        }
+    }
+    line
+}
+
 /// Convert a terminal viewport row into the absolute entry index in `lines`,
 /// accounting for image entries that occupy multiple terminal rows.
 fn viewport_row_to_entry(lines: &[DisplayLine], scroll: usize, row: usize) -> usize {
@@ -918,7 +1212,15 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
         Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
     };
 
-    let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
+    let code_blocks = locate_code_blocks(&elements, &display_lines);
+    let mut app = App::new(
+        display_lines,
+        picker,
+        doc_links,
+        code_blocks,
+        anchor_map,
+        thumb_files,
+    );
 
     // Prime viewport_height before the first iteration so the initial image
     // prefetch covers the full visible area rather than the default of 0.
@@ -1042,14 +1344,14 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
             // below is the sole stop condition.
             let mut y_offset = 0u16;
 
-            for dl in app.lines.iter().skip(app.scroll) {
+            for (idx, dl) in app.lines.iter().enumerate().skip(app.scroll) {
                 if y_offset >= content_area.height {
                     break;
                 }
                 match dl {
                     DisplayLine::Text(line) => {
                         f.render_widget(
-                            Paragraph::new(line.clone())
+                            Paragraph::new(app.display_text(idx, line, &theme.code))
                                 .block(Block::default().borders(Borders::NONE)),
                             Rect {
                                 x: content_area.x,
@@ -1151,6 +1453,41 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::Yellow)),
                     Span::raw(format!("{}_", app.search_query)),
                 ])
+            } else if let Some((msg, _)) = app
+                .flash
+                .as_ref()
+                .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(2))
+            {
+                let ok = app.copied_block.is_some() && !msg.starts_with("copy failed");
+                Line::from(vec![
+                    Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                    Span::styled(
+                        format!("  {}", msg),
+                        Style::default().fg(if ok { Color::Green } else { Color::Red }),
+                    ),
+                ])
+            } else if let Some(i) = app.code_cursor {
+                let b = &app.code_blocks[i];
+                let n = b.line_count();
+                Line::from(vec![
+                    Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                    Span::styled(
+                        format!(
+                            "  code {}/{}  {}  {} line{}{}  ",
+                            i + 1,
+                            app.code_blocks.len(),
+                            b.lang.as_deref().unwrap_or("text"),
+                            n,
+                            if n == 1 { "" } else { "s" },
+                            if app.copied_block == Some(i) { "  (copied)" } else { "" },
+                        ),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(
+                        "│ y/Enter copy  c/C next/prev  Esc deselect",
+                        Style::default().fg(theme.inline.strikethrough.to_color()),
+                    ),
+                ])
             } else if !app.search_results.is_empty() {
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
@@ -1186,7 +1523,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             (b, f) => format!("  ← [{}]  → [{}]", b, f),
                         };
                         Span::raw(format!(
-                            "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  / search  e code  a about  q quit{}",
+                            "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  c code blocks  / search  e code  a about  q quit{}",
                             app.scroll + 1, total, pct, nav_hint,
                         ))
                     },
@@ -1256,6 +1593,26 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         app.search_results.clear();
                         app.search_cursor = 0;
                         app.link_cursor = None;
+                        app.code_cursor = None;
+                    }
+
+                    // ── Code blocks: select, then confirm copy ───────────────
+                    (KeyCode::Char('c'), m) if !m.contains(KeyModifiers::CONTROL) => {
+                        if let Some(i) =
+                            step_code_block(&app.code_blocks, app.code_cursor, true, app.scroll)
+                        {
+                            app.select_code(i, true);
+                        }
+                    }
+                    (KeyCode::Char('C'), _) => {
+                        if let Some(i) =
+                            step_code_block(&app.code_blocks, app.code_cursor, false, app.scroll)
+                        {
+                            app.select_code(i, true);
+                        }
+                    }
+                    (KeyCode::Char('y'), _) | (KeyCode::Enter, _) if app.code_cursor.is_some() => {
+                        app.copy_selected(crate::clipboard::copy);
                     }
 
                     // ── Search navigation ────────────────────────────────────
@@ -1304,6 +1661,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
 
                     // ── Link cycling ─────────────────────────────────────────
                     (KeyCode::Tab, _) if !app.doc_links.is_empty() => {
+                        app.code_cursor = None;
                         app.link_cursor = Some(match app.link_cursor {
                             Some(i) => (i + 1) % app.doc_links.len(),
                             None => 0,
@@ -1313,6 +1671,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     }
                     (KeyCode::BackTab, _) if !app.doc_links.is_empty() => {
                         let len = app.doc_links.len();
+                        app.code_cursor = None;
                         app.link_cursor = Some(match app.link_cursor {
                             Some(0) | None => len - 1,
                             Some(i) => i - 1,
@@ -1384,7 +1743,27 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     MouseEventKind::Down(MouseButton::Left) => {
                         let clicked_line =
                             viewport_row_to_entry(&app.lines, app.scroll, mouse.row as usize);
-                        if let Some(href) = link_at_line(&app.doc_links, clicked_line) {
+                        let on_code = match code_click(
+                            &app.code_blocks,
+                            &app.lines,
+                            app.code_cursor,
+                            clicked_line,
+                            mouse.column as usize,
+                        ) {
+                            CodeClick::Select(i) => {
+                                app.select_code(i, false);
+                                true
+                            }
+                            CodeClick::Copy(_) => {
+                                app.copy_selected(crate::clipboard::copy);
+                                true
+                            }
+                            CodeClick::Miss => false,
+                        };
+                        // A click on a code block never also follows a nearby link.
+                        if let Some(href) =
+                            link_at_line(&app.doc_links, clicked_line).filter(|_| !on_code)
+                        {
                             let href = href.to_owned();
                             if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
@@ -1432,14 +1811,6 @@ pub fn open_code_view(file: &Path) -> anyhow::Result<()> {
         anyhow::bail!("editor '{}' exited with {}", editor, status);
     }
     Ok(())
-}
-
-fn which_exists(cmd: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1584,5 +1955,187 @@ mod tests {
         // fallback=99 > max_h=10: must be clamped to max_h
         let h = image_slot_height("/nonexistent/img.png", 80, 16, 10, 99);
         assert_eq!(h, 10, "missing-file fallback must be clamped to max_h");
+    }
+
+    // ── code blocks: locate, select, copy ────────────────────────────────────────
+
+    const CODE_DOC: &str = "# T\n\nIntro [a](#t)\n\n```python\nprint(1)\nprint(2)\n```\n\n- item\n\n  ```\n  nested\n  ```\n\n```rust\nfn main() {}\n```\n";
+
+    fn code_doc() -> (Vec<DisplayLine>, Vec<CodeBlockRef>) {
+        let elements = parser::parse(CODE_DOC);
+        let theme = Theme::default();
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &theme, 100, 16, 10, 5);
+        let blocks = locate_code_blocks(&elements, &lines);
+        (lines, blocks)
+    }
+
+    fn text_of(lines: &[DisplayLine], i: usize) -> String {
+        match &lines[i] {
+            DisplayLine::Text(l) => l.spans.iter().map(|s| s.content.as_ref()).collect(),
+            DisplayLine::Image { .. } => String::new(),
+        }
+    }
+
+    #[test]
+    fn locate_code_blocks_finds_top_level_and_nested() {
+        let (lines, blocks) = code_doc();
+        let codes: Vec<&str> = blocks.iter().map(|b| b.copy_text()).collect();
+        assert_eq!(codes, ["print(1)\nprint(2)", "nested", "fn main() {}"]);
+        assert_eq!(blocks[0].lang.as_deref(), Some("python"));
+        for b in &blocks {
+            assert!(text_of(&lines, b.header).contains(COPY_LABEL));
+            assert!(
+                text_of(&lines, b.end).trim().starts_with('─'),
+                "{:?}",
+                text_of(&lines, b.end)
+            );
+        }
+        // python block: header, 2 body lines, rule
+        assert_eq!(blocks[0].end - blocks[0].header, 3);
+        assert_eq!(blocks[0].line_count(), 2);
+    }
+
+    #[test]
+    fn step_code_block_wraps_and_starts_near_viewport() {
+        let (_, blocks) = code_doc();
+        assert_eq!(step_code_block(&blocks, None, true, 0), Some(0));
+        assert_eq!(step_code_block(&blocks, Some(2), true, 0), Some(0));
+        assert_eq!(step_code_block(&blocks, Some(0), false, 0), Some(2));
+        // scrolled past block 0: first forward press picks block 1
+        assert_eq!(
+            step_code_block(&blocks, None, true, blocks[0].end + 1),
+            Some(1)
+        );
+        assert_eq!(
+            step_code_block(&blocks, None, false, blocks[1].header + 1),
+            Some(1)
+        );
+        assert_eq!(step_code_block(&[], None, true, 0), None);
+    }
+
+    #[test]
+    fn click_selects_first_and_copies_only_on_label_of_selected() {
+        let (lines, blocks) = code_doc();
+        let b = &blocks[0];
+        let (label_col, _) = match &lines[b.header] {
+            DisplayLine::Text(l) => label_columns(l).unwrap(),
+            _ => unreachable!(),
+        };
+        let label_col = label_col + SELECTED_LABEL.len() - 1;
+        // Unselected: any click, even on the label, only selects.
+        assert_eq!(
+            code_click(&blocks, &lines, None, b.header, label_col),
+            CodeClick::Select(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(1), b.header + 1, 3),
+            CodeClick::Select(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, None, b.end, 0),
+            CodeClick::Select(0)
+        );
+        // Selected: label copies, elsewhere keeps it selected.
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), b.header, label_col),
+            CodeClick::Copy(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), b.header, 0),
+            CodeClick::Select(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), b.header + 1, label_col),
+            CodeClick::Select(0)
+        );
+        // Outside any block.
+        assert_eq!(code_click(&blocks, &lines, Some(0), 0, 0), CodeClick::Miss);
+    }
+
+    #[test]
+    fn decorated_header_keeps_width_and_shows_state() {
+        let (lines, blocks) = code_doc();
+        let theme = Theme::default();
+        let DisplayLine::Text(header) = &lines[blocks[0].header] else {
+            unreachable!()
+        };
+        let width = |l: &Line| {
+            l.spans
+                .iter()
+                .map(|s| s.content.chars().count())
+                .sum::<usize>()
+        };
+        for (state, label) in [
+            (CodeState::Selected, SELECTED_LABEL),
+            (CodeState::Copied, COPIED_LABEL),
+            (CodeState::SelectedCopied, COPIED_SELECTED_LABEL),
+        ] {
+            let d = decorate_code_line(header, state, true, &theme.code);
+            assert_eq!(width(&d), width(header), "{state:?}");
+            assert!(d.spans.iter().any(|s| s.content == label), "{state:?}");
+        }
+        let DisplayLine::Text(body) = &lines[blocks[0].header + 1] else {
+            unreachable!()
+        };
+        let d = decorate_code_line(body, CodeState::Copied, false, &theme.code);
+        assert!(d
+            .spans
+            .iter()
+            .any(|s| s.content == "▌ " && s.style.fg == Some(Color::Green)));
+    }
+
+    fn test_app() -> App {
+        let (lines, blocks) = code_doc();
+        let mut app = App::new(
+            lines,
+            Picker::halfblocks(),
+            vec![("#t".into(), 2)],
+            blocks,
+            Default::default(),
+            Vec::new(),
+        );
+        app.viewport_height = 10;
+        app
+    }
+
+    #[test]
+    fn copy_needs_a_selection_and_marks_the_block() {
+        let mut app = test_app();
+        let mut got = None;
+        app.copy_selected(|t| {
+            got = Some(t.to_string());
+            Ok("test")
+        });
+        assert_eq!(got, None, "nothing selected, nothing copied");
+        assert_eq!(app.copied_block, None);
+
+        app.link_cursor = Some(0);
+        app.select_code(2, true);
+        assert_eq!(
+            app.link_cursor, None,
+            "selecting code clears the link focus"
+        );
+        app.copy_selected(|t| {
+            got = Some(t.to_string());
+            Ok("test")
+        });
+        assert_eq!(got.as_deref(), Some("fn main() {}"));
+        assert_eq!(app.copied_block, Some(2));
+        assert!(app
+            .flash
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("(1 line) to clipboard via test"));
+
+        app.select_code(0, true);
+        app.copy_selected(|_| anyhow::bail!("no clipboard"));
+        assert_eq!(
+            app.copied_block,
+            Some(2),
+            "failed copy keeps the previous mark"
+        );
+        assert!(app.flash.as_ref().unwrap().0.starts_with("copy failed"));
     }
 }

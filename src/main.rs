@@ -2,6 +2,7 @@ use clap::Parser;
 
 mod about;
 mod app;
+mod clipboard;
 mod highlight;
 mod image;
 mod links;

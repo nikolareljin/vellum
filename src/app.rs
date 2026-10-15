@@ -2231,4 +2231,15 @@ mod tests {
         assert_eq!(b.copy_text(), "echo safe[2Krm -rf ~\n\tok");
         assert_eq!(b.hidden_controls(), 2);
     }
+
+    #[test]
+    fn crlf_code_block_reports_no_hidden_controls() {
+        let elements = parser::parse("```\r\na\r\nb\r\n```\r\n");
+        let theme = Theme::default();
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &theme, 100, 16, 10, 5);
+        let blocks = locate_code_blocks(&elements, &lines);
+        assert_eq!(blocks[0].copy_text(), "a\nb");
+        assert_eq!(blocks[0].hidden_controls(), 0, "{:?}", blocks[0].code);
+    }
 }

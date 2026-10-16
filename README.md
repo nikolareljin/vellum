@@ -40,7 +40,7 @@ vellum README.md
 
 ## Requirements
 
-- Rust ≥ 1.79 (stable)
+- Rust 1.90 or newer (stable)
 - `ffmpeg` (optional — required for video thumbnails, Phase 4+)
 - Terminal supporting Kitty Graphics / Sixel / iTerm2 (optional — for inline images, Phase 2+)
 

@@ -112,13 +112,14 @@
   <h3>"no clipboard available ... this terminal ignores OSC 52"</h3>
   <p>vellum found no clipboard tool and no system clipboard, and your terminal (GNOME Terminal,
   xfce4-terminal and other VTE terminals) drops OSC 52. Install <code>xclip</code> (X11) or
-  <code>wl-clipboard</code> (Wayland), or run vellum inside tmux with
-  <code>set -g set-clipboard on</code>.</p>
+  <code>wl-clipboard</code> (Wayland), or use a terminal that accepts OSC 52 (kitty, WezTerm,
+  foot, Alacritty). Running inside tmux only fills tmux's own paste buffer, because the VTE
+  terminal around it still drops the copy.</p>
 
   <h3>Copy on Linux uses OSC 52 although xclip is installed</h3>
   <p>vellum calls <code>xclip</code> and <code>xsel</code> only when <code>DISPLAY</code> is set, and
   <code>wl-copy</code> only when <code>WAYLAND_DISPLAY</code> is set. From a plain console or a
-  session without those variables it falls back to OSC 52.</p>
+  session without those variables it falls back to the system clipboard, then to OSC 52.</p>
 
   <h2>Display and keys</h2>
 

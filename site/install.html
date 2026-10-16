@@ -64,7 +64,7 @@
     <thead><tr><th>Platform</th><th>Methods</th></tr></thead>
     <tbody>
       <tr><td><strong>macOS</strong> (Apple Silicon, Intel)</td><td><a href="#homebrew">Homebrew</a>, <a href="#tarball">tarball</a>, <a href="#cargo">cargo</a></td></tr>
-      <tr><td><strong>Linux</strong> x86_64</td><td><a href="#homebrew">Homebrew</a>, <a href="#deb">.deb</a>, <a href="#tarball">tarball</a>, <a href="#binary">static binary</a>, <a href="#cargo">cargo</a></td></tr>
+      <tr><td><strong>Linux</strong> x86_64</td><td><a href="#homebrew">Homebrew</a>, <a href="#deb">.deb</a>, <a href="#tarball">tarball</a>, <a href="#binary">single binary</a>, <a href="#cargo">cargo</a></td></tr>
       <tr><td><strong>Linux</strong> arm64 and others</td><td><a href="#cargo">cargo</a>, <a href="#source">from source</a></td></tr>
       <tr><td><strong>Windows</strong> x86_64</td><td><a href="#windows">vellum-windows.exe</a>, <a href="#cargo">cargo</a>, or Linux in WSL</td></tr>
     </tbody>
@@ -91,15 +91,16 @@ brew install vellum</code></pre>
 
   <h2 id="tarball">Prebuilt tarballs</h2>
 
-  <p>Each release has three archives, each holding the <code>vellum</code> binary:</p>
+  <p>Each release has three archives named <code>vellum-&lt;version&gt;-&lt;target&gt;.tar.gz</code>,
+  each holding the <code>vellum</code> binary:</p>
 
   <div class="table-scroll">
   <table>
-    <thead><tr><th>File</th><th>For</th></tr></thead>
+    <thead><tr><th>Target</th><th>For</th></tr></thead>
     <tbody>
-      <tr><td><code>vellum-&lt;version&gt;-macos-arm64.tar.gz</code></td><td>macOS on Apple Silicon</td></tr>
-      <tr><td><code>vellum-&lt;version&gt;-macos-x86_64.tar.gz</code></td><td>macOS on Intel</td></tr>
-      <tr><td><code>vellum-&lt;version&gt;-linux-x86_64.tar.gz</code></td><td>Linux x86_64 (glibc)</td></tr>
+      <tr><td><code>macos-arm64</code></td><td>macOS on Apple Silicon</td></tr>
+      <tr><td><code>macos-x86_64</code></td><td>macOS on Intel</td></tr>
+      <tr><td><code>linux-x86_64</code></td><td>Linux x86_64 (glibc)</td></tr>
     </tbody>
   </table>
   </div>
@@ -135,7 +136,7 @@ mv vellum-musl ~/.local/bin/vellum</code></pre>
 
   <h2 id="cargo">Cargo (any platform with Rust)</h2>
 
-  <p>Needs Rust 1.79 or newer. This builds the latest code on the default branch:</p>
+  <p>Needs Rust 1.90 or newer. This builds the latest code on the default branch:</p>
 
 <pre><code>cargo install --locked --git https://github.com/nikolareljin/vellum --bin vellum</code></pre>
 

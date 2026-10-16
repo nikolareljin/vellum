@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Docs
 - User guide site: overview, install per platform, usage and keys, help, alternatives, about.
+- Minimum Rust is 1.90 (declared as `rust-version`); the README said 1.79, which the image dependencies no longer build with.
 
 ## [0.7.0] — 2026-10-15
 

@@ -188,6 +188,7 @@ vellum --remote-images README.md  <span class="c"># also fetch https images</spa
       <tr><td>Windows and WSL</td><td><code>clip.exe</code></td></tr>
       <tr><td>No clipboard tool installed</td><td>The system clipboard directly (nothing to install)</td></tr>
       <tr><td>No system clipboard either (plain console)</td><td>OSC 52 escape sequence to the terminal</td></tr>
+      <tr><td>VTE terminal (GNOME Terminal, Tilix, xfce4-terminal) with only OSC 52 left</td><td>Error: <code>no clipboard available: install xclip (X11) or wl-clipboard (Wayland); this terminal ignores OSC 52</code></td></tr>
       <tr><td>Over SSH</td><td>Always OSC 52</td></tr>
     </tbody>
   </table>

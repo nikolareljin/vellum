@@ -1148,11 +1148,12 @@ fn decorate_code_line(
 }
 
 /// Whether a key press may add `ch` to the search query: printable plain
-/// text, no Ctrl/Alt chord, at most `MAX_QUERY_CHARS` characters.
+/// text, no Ctrl or Alt chord, at most `MAX_QUERY_CHARS` characters.
+/// Ctrl and Alt together is AltGr on Windows (`@`, `{`, `\` on many layouts).
 fn accept_query_char(query: &str, ch: char, mods: KeyModifiers) -> bool {
-    !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        && is_query_char(ch)
-        && query.chars().count() < MAX_QUERY_CHARS
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    ctrl == alt && is_query_char(ch) && query.chars().count() < MAX_QUERY_CHARS
 }
 
 /// Restyle the characters of `line` that match `query` (see `find_matches`).
@@ -2325,6 +2326,8 @@ mod tests {
         assert!(accept_query_char("", '*', none));
         assert!(!accept_query_char("", 'a', KeyModifiers::CONTROL));
         assert!(!accept_query_char("", 'a', KeyModifiers::ALT));
+        let altgr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        assert!(accept_query_char("", '@', altgr));
         assert!(!accept_query_char("", '\x1b', none));
         assert!(!accept_query_char("", '\u{202E}', none));
         let full = "x".repeat(MAX_QUERY_CHARS);

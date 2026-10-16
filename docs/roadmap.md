@@ -8,7 +8,7 @@ Full Markdown text rendering in a scrollable TUI. All standard block and inline 
 
 Render image references directly in the terminal using `ratatui-image`.  
 Auto-detects protocol: **Kitty Graphics** → **Sixel** → **iTerm2** → halfblock fallback.  
-Local paths supported; remote URLs fetched on demand.
+Local paths supported; remote https images only with `--remote-images` (off by default, internal addresses refused).
 
 ## Phase 3 — Link Navigation (0.3.0)
 
@@ -32,7 +32,7 @@ For `<video>` HTML or Markdown links ending in `.mp4` / `.webm` / `.mov`:
 
 ## Phase 6 — Polish (0.5.0)
 
-- `/` key opens incremental search; `n` / `N` cycle matches
+- `/` key opens a plain-text search (`Enter` runs it); `n` / `N` cycle matches
 - Match highlighting in rendered lines
 - Config file (`~/.config/vellum/config.toml`) for theme, keybindings
 - `--theme` CLI flag (themes from syntect's built-in set)

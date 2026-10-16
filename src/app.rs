@@ -22,7 +22,6 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
-use crate::clipboard::which_exists;
 use crate::image::{is_remote_url, safe_error_url, ImageCache};
 use crate::links::{anchor_from_heading, open_url};
 use crate::parser::{self, Element};
@@ -2010,6 +2009,14 @@ pub fn open_code_view(file: &Path) -> anyhow::Result<()> {
         anyhow::bail!("editor '{}' exited with {}", editor, status);
     }
     Ok(())
+}
+
+fn which_exists(cmd: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(cmd)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

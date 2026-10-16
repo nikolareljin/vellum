@@ -71,7 +71,11 @@ static REMOTE_IMAGES: OnceLock<bool> = OnceLock::new();
 
 /// Record the `--remote-images` flag.  Call once, before the first render.
 pub fn set_remote_images(enabled: bool) {
-    let _ = REMOTE_IMAGES.set(enabled);
+    let first = REMOTE_IMAGES.set(enabled).is_ok();
+    debug_assert!(
+        first,
+        "set_remote_images after the setting was already read"
+    );
 }
 
 /// Whether remote images may be fetched.  `VELLUM_NO_REMOTE_IMAGES` always wins.

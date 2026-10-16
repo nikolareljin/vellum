@@ -16,7 +16,7 @@ pub fn copy(text: &str) -> anyhow::Result<&'static str> {
     if !is_ssh_session() {
         // A missing tool fails to spawn (NotFound); try the next one.
         for (tool, args) in candidate_tools() {
-            if pipe_to(tool, args, text).is_ok() {
+            if pipe_to(tool, args, &tool_input(tool, text)).is_ok() {
                 return Ok(tool);
             }
         }
@@ -32,7 +32,7 @@ pub fn copy(text: &str) -> anyhow::Result<&'static str> {
 /// Largest OSC 52 payload (base64 bytes) sent.  xterm drops sequences above
 /// about 100 KB and other terminals truncate silently, which would report a
 /// copy that did not happen.  This matches the limit common tools use.
-pub const OSC52_MAX_ENCODED: usize = 74_994;
+const OSC52_MAX_ENCODED: usize = 74_994;
 
 /// Refuse text whose OSC 52 payload a terminal would cut short.
 fn check_osc52_size(text: &str) -> anyhow::Result<()> {
@@ -60,7 +60,7 @@ fn is_ssh_session() -> bool {
 /// reaches the outer terminal when `set-clipboard on`; the DCS passthrough
 /// form reaches it when `allow-passthrough on`.  Both carry the same text, so
 /// sending both works with either setting.
-pub fn osc52_output(text: &str, in_tmux: bool) -> String {
+fn osc52_output(text: &str, in_tmux: bool) -> String {
     let seq = osc52_sequence(text);
     if in_tmux {
         let wrapped = seq.replace('\x1b', "\x1b\x1b");
@@ -88,7 +88,23 @@ fn candidate_tools() -> Vec<(&'static str, &'static [&'static str])> {
     tools
 }
 
-fn pipe_to(tool: &str, args: &[&str], text: &str) -> anyhow::Result<()> {
+/// Bytes a tool expects on stdin.  `clip.exe` reads input without a BOM in the
+/// console codepage, which garbles non-ASCII text; UTF-16LE with a BOM is
+/// read as Unicode.  The other tools take UTF-8.
+fn tool_input(tool: &str, text: &str) -> Vec<u8> {
+    if tool == "clip.exe" {
+        std::iter::once('\u{FEFF}')
+            .chain(text.chars())
+            .collect::<String>()
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    } else {
+        text.as_bytes().to_vec()
+    }
+}
+
+fn pipe_to(tool: &str, args: &[&str], data: &[u8]) -> anyhow::Result<()> {
     let mut child = Command::new(tool)
         .args(args)
         .stdin(Stdio::piped())
@@ -101,7 +117,7 @@ fn pipe_to(tool: &str, args: &[&str], text: &str) -> anyhow::Result<()> {
         .stdin
         .take()
         .ok_or_else(|| anyhow::anyhow!("{tool}: no stdin"))?;
-    let data = text.as_bytes().to_vec();
+    let data = data.to_vec();
     std::thread::spawn(move || {
         let _ = stdin.write_all(&data);
     });
@@ -124,21 +140,13 @@ fn pipe_to(tool: &str, args: &[&str], text: &str) -> anyhow::Result<()> {
     }
 }
 
-pub fn which_exists(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// `ESC ] 52 ; c ; <base64> BEL`: write `text` to the clipboard selection.
-pub fn osc52_sequence(text: &str) -> String {
+fn osc52_sequence(text: &str) -> String {
     format!("\x1b]52;c;{}\x07", base64(text.as_bytes()))
 }
 
 /// Standard base64 (RFC 4648) with padding.
-pub fn base64(data: &[u8]) -> String {
+fn base64(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
@@ -192,7 +200,7 @@ mod tests {
     #[test]
     fn stuck_tool_times_out() {
         let start = std::time::Instant::now();
-        let err = pipe_to("sleep", &["10"], &"x".repeat(1 << 20)).unwrap_err();
+        let err = pipe_to("sleep", &["10"], "x".repeat(1 << 20).as_bytes()).unwrap_err();
         assert!(err.to_string().contains("did not finish"), "{err}");
         assert!(start.elapsed() < TOOL_TIMEOUT + std::time::Duration::from_secs(1));
     }
@@ -204,8 +212,17 @@ mod tests {
         let out = dir.path().join("out");
         let text = "line 1\n  line 2\n".repeat(10_000);
         let script = format!("cat > '{}'", out.display());
-        pipe_to("sh", &["-c", &script], &text).unwrap();
+        pipe_to("sh", &["-c", &script], text.as_bytes()).unwrap();
         assert_eq!(std::fs::read_to_string(out).unwrap(), text);
+    }
+
+    #[test]
+    fn clip_exe_gets_utf16le_with_bom() {
+        assert_eq!(
+            tool_input("clip.exe", "é中"),
+            [0xFF, 0xFE, 0xE9, 0x00, 0x2D, 0x4E]
+        );
+        assert_eq!(tool_input("xclip", "é"), "é".as_bytes());
     }
 
     #[test]

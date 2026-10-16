@@ -123,7 +123,7 @@ fn test_no_remote_images_env_blocks_fetch() {
 /// The opt-in is decided once per process; this test owns that decision.
 #[test]
 fn remote_images_are_off_by_default() {
-    use vellum::image::{load_image_url, remote_images_enabled, set_remote_images};
+    use vellum::image::{load_image_url, remote_images_enabled};
     let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     if std::env::var_os("VELLUM_REMOTE_IMAGES").is_some() {
         eprintln!("VELLUM_REMOTE_IMAGES set in the environment; skipping");
@@ -135,13 +135,6 @@ fn remote_images_are_off_by_default() {
     );
     let err = load_image_url("https://example.com/a.png").unwrap_err();
     assert!(err.to_string().contains("remote images are off"), "{err}");
-
-    // The first decision sticks for the session; a document cannot flip it.
-    set_remote_images(true);
-    assert!(
-        !remote_images_enabled(),
-        "first decision sticks for the session"
-    );
 }
 
 #[test]

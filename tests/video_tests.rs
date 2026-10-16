@@ -27,7 +27,15 @@ fn test_extract_thumbnail_reads_local_path_with_colon() {
     let dir = tempfile::tempdir().unwrap();
     let video = dir.path().join("http:clip.mp4");
     let made = std::process::Command::new("ffmpeg")
-        .args(["-y", "-f", "lavfi", "-i", "color=c=red:s=32x32:d=1", "-pix_fmt", "yuv420p"])
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=32x32:d=1",
+            "-pix_fmt",
+            "yuv420p",
+        ])
         .arg(format!("file:{}", video.display()))
         .stderr(std::process::Stdio::null())
         .status()

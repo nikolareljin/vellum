@@ -2444,7 +2444,7 @@ mod tests {
                     unreachable!()
                 };
                 assert!(
-                    h.width() <= cols - 1 || cols - 1 < 10,
+                    h.width() < cols || cols < 11,
                     "width {cols}: header {} cols",
                     h.width()
                 );

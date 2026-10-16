@@ -141,7 +141,8 @@ present, else the OSC 52 escape sequence. Over SSH it always uses OSC 52, so
 the text lands in the clipboard of the machine you type at. The terminal must
 allow OSC 52 (kitty, WezTerm, iTerm2, foot, Windows Terminal do; xterm needs
 `allowWindowOps`). In tmux set `set -g set-clipboard on` or
-`set -g allow-passthrough on`.
+`set -g allow-passthrough on`. OSC 52 copies are limited to about 73 KB of
+code; vellum says so instead of copying part of a block.
 
 ## Development
 

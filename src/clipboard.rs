@@ -47,6 +47,9 @@ fn check_osc52_size(text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// How long a clipboard tool may take before the next method is tried.
+const TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn is_ssh_session() -> bool {
     ["SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT"]
         .iter()
@@ -92,17 +95,33 @@ fn pipe_to(tool: &str, args: &[&str], text: &str) -> anyhow::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    // Dropping stdin closes the pipe so the tool sees EOF.
-    child
+    // Write on a thread: a tool that is not reading yet would block a large
+    // write past the timeout below.  Dropping stdin closes the pipe (EOF).
+    let mut stdin = child
         .stdin
         .take()
-        .ok_or_else(|| anyhow::anyhow!("{tool}: no stdin"))?
-        .write_all(text.as_bytes())?;
-    let status = child.wait()?;
-    if !status.success() {
-        anyhow::bail!("{tool} exited with {status}");
+        .ok_or_else(|| anyhow::anyhow!("{tool}: no stdin"))?;
+    let data = text.as_bytes().to_vec();
+    std::thread::spawn(move || {
+        let _ = stdin.write_all(&data);
+    });
+    // A tool can block for minutes (xclip connecting to an unreachable X
+    // host).  The UI waits on this call, so give up after a short limit.
+    let deadline = std::time::Instant::now() + TOOL_TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            if !status.success() {
+                anyhow::bail!("{tool} exited with {status}");
+            }
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("{tool} did not finish within {TOOL_TIMEOUT:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    Ok(())
 }
 
 pub fn which_exists(cmd: &str) -> bool {
@@ -167,6 +186,26 @@ mod tests {
             osc52_output("a", true),
             "\x1b]52;c;YQ==\x07\x1bPtmux;\x1b\x1b]52;c;YQ==\x07\x1b\\"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stuck_tool_times_out() {
+        let start = std::time::Instant::now();
+        let err = pipe_to("sleep", &["10"], &"x".repeat(1 << 20)).unwrap_err();
+        assert!(err.to_string().contains("did not finish"), "{err}");
+        assert!(start.elapsed() < TOOL_TIMEOUT + std::time::Duration::from_secs(1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn working_tool_receives_all_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        let text = "line 1\n  line 2\n".repeat(10_000);
+        let script = format!("cat > '{}'", out.display());
+        pipe_to("sh", &["-c", &script], &text).unwrap();
+        assert_eq!(std::fs::read_to_string(out).unwrap(), text);
     }
 
     #[test]

@@ -7,10 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` or a mouse click, then copy with `y`/`Enter` or a click on its label. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Falls back to OSC 52 when no clipboard tool is installed, and always uses OSC 52 over SSH so the copy reaches the local clipboard (closes #15).
+- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` or a mouse click, then copy with `y`/`Enter` or a click on its label. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Falls back to OSC 52 when no clipboard tool is installed, and always uses OSC 52 over SSH so the copy reaches the local clipboard. OSC 52 refuses blocks over about 73 KB rather than let the terminal truncate them (closes #15).
 
 ### Changed
-- Search (`/`) matches the document text literally: no pattern syntax, code block labels are not searched, every occurrence is highlighted, and a miss says `no match`. The query takes printable characters only, no Ctrl/Alt chords, up to 200 characters.
+- Search (`/`) matches the document text literally: no pattern syntax, code block labels are not searched, every occurrence is highlighted, and a miss says `no match`. The query takes printable characters only (no Ctrl or Alt shortcuts; AltGr works), up to 200 characters.
 
 ### Security
 - Invisible characters are stripped from all parsed text, link targets, status messages and the file name before display, search or copy: control characters (ESC sequences, CR, BEL), bidi marks, zero-width and other invisible format characters, and tag characters. Emoji joiners and variation selectors stay.

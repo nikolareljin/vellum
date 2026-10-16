@@ -982,12 +982,19 @@ fn is_header_line(line: &Line<'_>) -> bool {
 
 /// The bottom rule of a code block: a run of `─` with no background.
 /// Code text never matches because highlighted spans always carry a background.
+/// Any other span may only be indent or quote/list markers: a paragraph that
+/// merely contains a run of `─` must wrap, not be shortened.
 fn is_rule_line(line: &Line<'_>) -> bool {
-    line.spans.iter().any(|s| {
+    let is_run = |s: &Span<'_>| {
         s.style.bg.is_none()
             && s.content.chars().count() >= 8
             && s.content.chars().all(|c| c == '─')
-    })
+    };
+    line.spans.iter().any(is_run)
+        && line
+            .spans
+            .iter()
+            .all(|s| is_run(s) || !s.content.chars().any(char::is_alphanumeric))
 }
 
 /// Locate each code block's header and bottom rule in the display lines.
@@ -1803,7 +1810,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     (KeyCode::Char('G'), _) | (KeyCode::End, _) => app.goto_bottom(),
 
                     // ── Link cycling ─────────────────────────────────────────
-                    (KeyCode::Tab, _) if !app.doc_links.is_empty() => {
+                    (KeyCode::Tab, _) if !app.search_mode && !app.doc_links.is_empty() => {
                         app.code_cursor = None;
                         app.link_cursor = Some(match app.link_cursor {
                             Some(i) => (i + 1) % app.doc_links.len(),
@@ -1812,7 +1819,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         let offset = app.doc_links[app.link_cursor.unwrap()].1;
                         app.scroll = offset.min(app.max_scroll());
                     }
-                    (KeyCode::BackTab, _) if !app.doc_links.is_empty() => {
+                    (KeyCode::BackTab, _) if !app.search_mode && !app.doc_links.is_empty() => {
                         let len = app.doc_links.len();
                         app.code_cursor = None;
                         app.link_cursor = Some(match app.link_cursor {
@@ -1883,7 +1890,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     MouseEventKind::ScrollUp => app.scroll_up(3),
 
                     // ── Left click: follow link under cursor ──────────────────
-                    MouseEventKind::Down(MouseButton::Left) => {
+                    // While a query is being typed the prompt would hide the result.
+                    MouseEventKind::Down(MouseButton::Left) if !app.search_mode => {
                         let clicked_line =
                             viewport_row_to_entry(&app.lines, app.scroll, mouse.row as usize);
                         let on_code = match code_click(
@@ -2464,6 +2472,22 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn paragraph_with_a_rule_run_still_wraps_intact() {
+        let md = format!("{} **{}**\n", "word ".repeat(30), "─".repeat(10));
+        let els = parser::parse(&md);
+        let (lines, _, _, _) =
+            build_display_lines(&els, Path::new("."), &Theme::default(), 41, 16, 10, 5);
+        let all: String = (0..lines.len()).map(|i| text_of(&lines, i)).collect();
+        assert!(all.contains(&"─".repeat(10)), "rule run shortened");
+        for i in 0..lines.len() {
+            assert!(
+                text_of(&lines, i).chars().count() <= 40,
+                "line {i} overflows"
+            );
         }
     }
 }

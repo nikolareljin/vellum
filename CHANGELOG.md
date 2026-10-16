@@ -13,9 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Search (`/`) matches the document text literally: no pattern syntax, code block labels are not searched, every occurrence is highlighted, and a miss says `no match`. The query takes printable characters only, no Ctrl/Alt chords, up to 200 characters.
 
 ### Security
-- Control characters (ESC sequences, CR, BEL) and bidi override marks are stripped from all parsed text, link targets and the file name before display, search or copy.
+- Invisible characters are stripped from all parsed text, link targets, status messages and the file name before display, search or copy: control characters (ESC sequences, CR, BEL), bidi marks, zero-width and other invisible format characters, and tag characters. Emoji joiners and variation selectors stay.
+- Video thumbnails pass `file:<absolute path>` to ffmpeg, so a file named like `http:x.mp4` or `subfile,...` is read as a local file, not a protocol.
 
 ### Fixed
+- `q` typed into a search no longer quits.
+- Key releases (reported on Windows) no longer count as a second key press.
 - Bump `rustls` 0.23.40 -> 0.23.46 (RUSTSEC-2026-0285, -0346, -0348, -0349).
 
 ## [0.6.2] — 2026-06-03

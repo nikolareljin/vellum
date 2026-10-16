@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -315,6 +317,39 @@ fn chars_to_line(chars: Vec<(char, ratatui::style::Style)>) -> Line<'static> {
         spans.push(Span::styled(buf, cur_style));
     }
     Line::from(spans)
+}
+
+/// Lay out one rendered line at `max_width` columns.  Code block header bars
+/// and bottom rules are fitted, never wrapped: a wrap could split the copy
+/// label or move part of the block outside its tracked range.
+fn layout_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
+    if is_header_line(&line) || is_rule_line(&line) {
+        vec![fit_chrome(line, max_width)]
+    } else {
+        wrap_line(line, max_width)
+    }
+}
+
+/// Shrink a code block header or rule to `max_width` columns: the header
+/// gives up padding before its copy label, the rule gets shorter.  Other
+/// lines are returned unchanged.
+fn fit_chrome(mut line: Line<'static>, max_width: usize) -> Line<'static> {
+    let over = line.width().saturating_sub(max_width);
+    if over == 0 {
+        return line;
+    }
+    if let Some(idx) = line.spans.iter().position(is_copy_label) {
+        if idx > 0 {
+            let pad = line.spans[idx - 1].width();
+            line.spans[idx - 1].content = " ".repeat(pad.saturating_sub(over).max(1)).into();
+        }
+    } else if let Some(span) = line.spans.iter_mut().find(|s| {
+        s.style.bg.is_none() && s.content.chars().all(|c| c == '─') && !s.content.is_empty()
+    }) {
+        let keep = span.width().saturating_sub(over).max(1);
+        span.content = "─".repeat(keep).into();
+    }
+    line
 }
 
 /// Word-wrap a styled `Line` into multiple `Line`s, each ≤ `max_width` chars wide.
@@ -657,7 +692,7 @@ fn build_display_lines(
                 } else {
                     let text_lines = render_elements(std::slice::from_ref(el), theme);
                     for l in text_lines {
-                        for wrapped in wrap_line(l, wrap_cols) {
+                        for wrapped in layout_line(l, wrap_cols) {
                             out.push(DisplayLine::Text(wrapped));
                         }
                     }
@@ -686,7 +721,7 @@ fn build_display_lines(
                         // ffmpeg missing or file unreadable — text placeholder
                         let text_lines = render_elements(std::slice::from_ref(el), theme);
                         for l in text_lines {
-                            for wrapped in wrap_line(l, wrap_cols) {
+                            for wrapped in layout_line(l, wrap_cols) {
                                 out.push(DisplayLine::Text(wrapped));
                             }
                         }
@@ -696,7 +731,7 @@ fn build_display_lines(
             Element::Heading { text, .. } => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -706,7 +741,7 @@ fn build_display_lines(
                 // Render full list for display (preserves ordered-list numbering).
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -741,7 +776,7 @@ fn build_display_lines(
                             } else {
                                 wrap_cols
                             };
-                            wrap_line(l.clone(), w).len()
+                            layout_line(l.clone(), w).len()
                         })
                         .sum::<usize>()
                         .saturating_sub(1);
@@ -761,7 +796,7 @@ fn build_display_lines(
                         );
                         let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                             .iter()
-                            .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                            .map(|l| layout_line(l.clone(), wrap_cols).len())
                             .sum::<usize>()
                             .saturating_sub(1);
                         el_off += el_lines.max(1);
@@ -771,7 +806,7 @@ fn build_display_lines(
             Element::BlockQuote(inner) => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -782,7 +817,7 @@ fn build_display_lines(
                     let single = Element::BlockQuote(vec![inner_el.clone()]);
                     let inner_lines: usize = render_elements(std::slice::from_ref(&single), theme)
                         .iter()
-                        .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                        .map(|l| layout_line(l.clone(), wrap_cols).len())
                         .sum::<usize>()
                         .saturating_sub(1);
                     inner_disp += inner_lines.max(1);
@@ -799,7 +834,7 @@ fn build_display_lines(
             Element::Paragraph(spans) => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in &text_lines {
-                    for wrapped in wrap_line(l.clone(), wrap_cols) {
+                    for wrapped in layout_line(l.clone(), wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -831,14 +866,14 @@ fn build_display_lines(
                 // whitespace and corrupts indentation / table alignment.
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    out.push(DisplayLine::Text(l));
+                    out.push(DisplayLine::Text(fit_chrome(l, wrap_cols)));
                 }
             }
             _ => {
                 // HRule and any future prose elements
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -968,12 +1003,6 @@ fn locate_code_blocks(elements: &[Element], lines: &[DisplayLine]) -> Vec<CodeBl
         .collect();
     if headers.len() != sources.len() {
         // Pairing by order would hand out the wrong text; offer no copy instead.
-        debug_assert!(
-            false,
-            "code block headers {} != blocks {}",
-            headers.len(),
-            sources.len()
-        );
         return Vec::new();
     }
     sources
@@ -1048,12 +1077,15 @@ fn code_click(
     };
     if selected == Some(i) && entry == blocks[i].header {
         if let Some(DisplayLine::Text(line)) = lines.get(entry) {
-            let label = if copied == Some(i) {
-                COPIED_SELECTED_LABEL
+            // Measure the label as drawn: decoration only changes geometry,
+            // so the theme colours do not matter here.
+            let (state, label) = if copied == Some(i) {
+                (CodeState::SelectedCopied, COPIED_SELECTED_LABEL)
             } else {
-                SELECTED_LABEL
+                (CodeState::Selected, SELECTED_LABEL)
             };
-            if let Some((start, width)) = label_columns(line, label) {
+            let drawn = decorate_code_line(line, state, true, &CodeColors::default());
+            if let Some((start, width)) = label_columns(&drawn, label) {
                 if (start..start + width).contains(&col) {
                     return CodeClick::Copy(i);
                 }
@@ -1063,16 +1095,12 @@ fn code_click(
     CodeClick::Select(i)
 }
 
-/// Column range of `label` drawn over the copy label of an undecorated header
-/// line.  Decorated labels are wider and grow leftwards into the padding.
+/// Terminal column range `(start, width)` of the span reading `label` on a
+/// decorated header line.  Widths are display columns (CJK counts 2).
 fn label_columns(line: &Line<'_>, label: &str) -> Option<(usize, usize)> {
-    let idx = line.spans.iter().position(is_copy_label)?;
-    let end: usize = line.spans[..=idx]
-        .iter()
-        .map(|s| s.content.chars().count())
-        .sum();
-    let width = label.chars().count();
-    Some((end.saturating_sub(width), width))
+    let idx = line.spans.iter().position(|s| s.content == label)?;
+    let start = line.spans[..idx].iter().map(|s| s.width()).sum();
+    Some((start, line.spans[idx].width()))
 }
 
 const SELECTED_LABEL: &str = "[ y: copy ]";
@@ -1107,9 +1135,9 @@ fn decorate_code_line(
         };
         if let Some(idx) = line.spans.iter().position(is_copy_label) {
             // Keep the bar width: the wider label takes columns from the padding.
-            let grow = label.chars().count().saturating_sub(COPY_LABEL.len());
+            let grow = label.len().saturating_sub(COPY_LABEL.len());
             if idx > 0 {
-                let pad = line.spans[idx - 1].content.chars().count();
+                let pad = line.spans[idx - 1].width();
                 line.spans[idx - 1].content = " ".repeat(pad.saturating_sub(grow).max(1)).into();
             }
             line.spans[idx].content = label.into();
@@ -1559,7 +1587,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                     Span::styled(
-                        format!("  {}", msg),
+                        format!("  {}", clean_inline(msg)),
                         Style::default().fg(if ok { Color::Green } else { Color::Red }),
                     ),
                 ])
@@ -1599,7 +1627,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                     Span::styled(
-                        format!("  → {}  ", href),
+                        format!("  → {}  ", clean_inline(href)),
                         Style::default().fg(theme.inline.link.to_color()),
                     ),
                     Span::styled(
@@ -1638,12 +1666,17 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
+                // Windows also reports key releases; act on press and repeat only,
+                // or every key would count twice.
                 Event::Key(KeyEvent {
-                    code, modifiers, ..
-                }) => match (code, modifiers) {
-                    (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        break 'main NavAction::Quit;
-                    }
+                    code,
+                    modifiers,
+                    kind,
+                    ..
+                }) if kind != KeyEventKind::Release => match (code, modifiers) {
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => break 'main NavAction::Quit,
+                    // While typing a search, `q` is text, not quit.
+                    (KeyCode::Char('q'), _) if !app.search_mode => break 'main NavAction::Quit,
 
                     // ── History navigation ───────────────────────────────────
                     (KeyCode::Left, KeyModifiers::ALT) => break 'main NavAction::Back,
@@ -1651,8 +1684,6 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
 
                     // ── Search mode input ────────────────────────────────────
                     (KeyCode::Char(ch), m) if app.search_mode => {
-                        // Plain text only: printable characters, no Ctrl/Alt
-                        // chords, bounded length.
                         if accept_query_char(&app.search_query, ch, m) {
                             app.search_query.push(ch);
                         }
@@ -2132,7 +2163,11 @@ mod tests {
         let (lines, blocks) = code_doc();
         let b = &blocks[0];
         let (label_col, _) = match &lines[b.header] {
-            DisplayLine::Text(l) => label_columns(l, SELECTED_LABEL).unwrap(),
+            DisplayLine::Text(l) => label_columns(
+                &decorate_code_line(l, CodeState::Selected, true, &CodeColors::default()),
+                SELECTED_LABEL,
+            )
+            .unwrap(),
             _ => unreachable!(),
         };
         let label_col = label_col + SELECTED_LABEL.len() - 1;
@@ -2274,7 +2309,8 @@ mod tests {
         let DisplayLine::Text(l) = &lines[blocks[0].header] else {
             unreachable!()
         };
-        let (start, _) = label_columns(l, COPIED_SELECTED_LABEL).unwrap();
+        let drawn = decorate_code_line(l, CodeState::SelectedCopied, true, &CodeColors::default());
+        let (start, _) = label_columns(&drawn, COPIED_SELECTED_LABEL).unwrap();
         assert_eq!(
             code_click(&blocks, &lines, Some(0), Some(0), blocks[0].header, start),
             CodeClick::Copy(0)
@@ -2390,6 +2426,44 @@ mod tests {
                 !t.chars().any(crate::sanitize::is_hidden_control),
                 "line {i}: {t:?}"
             );
+        }
+    }
+
+    #[test]
+    fn every_width_keeps_every_block_copyable_and_clickable() {
+        let doc = "```中文语言\n漢字 code\n```\n\n- item\n\n  ```python\n  nested\n  ```\n\n> ```rust\n> quoted\n> ```\n\n```\nplain\n```\n";
+        let elements = parser::parse(doc);
+        let theme = Theme::default();
+        for cols in 20..=120 {
+            let (lines, _, _, _) =
+                build_display_lines(&elements, Path::new("."), &theme, cols, 16, 10, 5);
+            let blocks = locate_code_blocks(&elements, &lines);
+            assert_eq!(blocks.len(), 4, "width {cols}");
+            for (i, b) in blocks.iter().enumerate() {
+                let DisplayLine::Text(h) = &lines[b.header] else {
+                    unreachable!()
+                };
+                assert!(
+                    h.width() <= cols - 1 || cols - 1 < 10,
+                    "width {cols}: header {} cols",
+                    h.width()
+                );
+                for (state, label, copied) in [
+                    (CodeState::Selected, SELECTED_LABEL, None),
+                    (CodeState::SelectedCopied, COPIED_SELECTED_LABEL, Some(i)),
+                ] {
+                    let drawn = decorate_code_line(h, state, true, &theme.code);
+                    let (start, w) = label_columns(&drawn, label).unwrap();
+                    // First and last drawn column of the label both copy.
+                    for col in [start, start + w - 1] {
+                        assert_eq!(
+                            code_click(&blocks, &lines, Some(i), copied, b.header, col),
+                            CodeClick::Copy(i),
+                            "width {cols} block {i} col {col}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

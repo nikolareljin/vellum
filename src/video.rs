@@ -10,6 +10,10 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Result<NamedTempFile>
         bail!("video file not found: {}", video_path.display());
     }
 
+    // ffmpeg treats `proto:rest` inputs as protocols (http:, concat:, ...).
+    // An absolute path behind `file:` is always read as a local file.
+    let input = format!("file:{}", std::fs::canonicalize(video_path)?.display());
+
     let tmp = tempfile::Builder::new()
         .prefix("vellum_thumb_")
         .suffix(".png")
@@ -19,7 +23,7 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Result<NamedTempFile>
         .args([
             "-y",
             "-i",
-            &video_path.to_string_lossy(),
+            &input,
             "-vframes",
             "1",
             "-q:v",

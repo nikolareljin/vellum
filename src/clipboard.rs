@@ -14,17 +14,37 @@ use std::process::{Command, Stdio};
 /// Copy `text` to the system clipboard.  Returns the name of the method used.
 pub fn copy(text: &str) -> anyhow::Result<&'static str> {
     if !is_ssh_session() {
+        // A missing tool fails to spawn (NotFound); try the next one.
         for (tool, args) in candidate_tools() {
-            if which_exists(tool) && pipe_to(tool, args, text).is_ok() {
+            if pipe_to(tool, args, text).is_ok() {
                 return Ok(tool);
             }
         }
     }
+    check_osc52_size(text)?;
     let in_tmux = std::env::var_os("TMUX").is_some();
     let mut out = std::io::stdout();
     out.write_all(osc52_output(text, in_tmux).as_bytes())?;
     out.flush()?;
     Ok(if in_tmux { "OSC 52 (tmux)" } else { "OSC 52" })
+}
+
+/// Largest OSC 52 payload (base64 bytes) sent.  xterm drops sequences above
+/// about 100 KB and other terminals truncate silently, which would report a
+/// copy that did not happen.  This matches the limit common tools use.
+pub const OSC52_MAX_ENCODED: usize = 74_994;
+
+/// Refuse text whose OSC 52 payload a terminal would cut short.
+fn check_osc52_size(text: &str) -> anyhow::Result<()> {
+    let encoded = text.len().div_ceil(3) * 4;
+    if encoded > OSC52_MAX_ENCODED {
+        anyhow::bail!(
+            "block is too large for OSC 52 ({} KB encoded, terminals accept about {} KB)",
+            encoded / 1024,
+            OSC52_MAX_ENCODED / 1024
+        );
+    }
+    Ok(())
 }
 
 fn is_ssh_session() -> bool {
@@ -147,6 +167,14 @@ mod tests {
             osc52_output("a", true),
             "\x1b]52;c;YQ==\x07\x1bPtmux;\x1b\x1b]52;c;YQ==\x07\x1b\\"
         );
+    }
+
+    #[test]
+    fn osc52_size_limit() {
+        let max_raw = OSC52_MAX_ENCODED / 4 * 3;
+        assert!(check_osc52_size(&"a".repeat(max_raw)).is_ok());
+        let err = check_osc52_size(&"a".repeat(max_raw + 1)).unwrap_err();
+        assert!(err.to_string().contains("too large for OSC 52"));
     }
 
     #[test]

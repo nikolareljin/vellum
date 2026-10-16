@@ -216,7 +216,11 @@ fn render_code_block(
     out.push(Line::from(vec![
         RSpan::styled(format!("  {} ", label), label_style),
         RSpan::styled(
-            " ".repeat(64_usize.saturating_sub(label.len() + 3 + COPY_LABEL.len() + 1)),
+            // Display columns, not bytes: a CJK language name is 2 per char.
+            " ".repeat(
+                64_usize
+                    .saturating_sub(RSpan::raw(label.as_str()).width() + 3 + COPY_LABEL.len() + 1),
+            ),
             Style::default().bg(header_bg),
         ),
         RSpan::styled(COPY_LABEL, copy_style),

@@ -15,12 +15,39 @@ pub const MAX_QUERY_CHARS: usize = 200;
 /// newline are kept: they are layout, and code blocks need them.
 pub fn is_hidden_control(c: char) -> bool {
     (c.is_control() && c != '\n' && c != '\t')
-        || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        || matches!(
+            c,
+            // bidi embeddings, overrides, isolates and marks
+            '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{061C}'
+                // invisible formatting: soft hyphen, Mongolian vowel separator,
+                // zero width space, word joiner and invisible operators, BOM
+                | '\u{00AD}'
+                | '\u{180E}'
+                | '\u{200B}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{FEFF}'
+                // tag characters and supplementary variation selectors: carry
+                // hidden text ("ASCII smuggling")
+                | '\u{E0000}'..='\u{E007F}'
+                | '\u{E0100}'..='\u{E01EF}'
+        )
+}
+
+/// Line and paragraph separators: shown as nothing, pasted as a line break.
+fn is_line_separator(c: char) -> bool {
+    c == '\u{2028}' || c == '\u{2029}'
 }
 
 /// `s` without hidden control characters.
 pub fn clean(s: &str) -> String {
-    s.chars().filter(|&c| !is_hidden_control(c)).collect()
+    s.chars()
+        .filter(|&c| !is_hidden_control(c))
+        .map(|c| if is_line_separator(c) { '\n' } else { c })
+        .collect()
 }
 
 /// `clean`, and tab/newline become spaces: for one-line UI text such as the
@@ -28,14 +55,20 @@ pub fn clean(s: &str) -> String {
 pub fn clean_inline(s: &str) -> String {
     s.chars()
         .filter(|&c| !is_hidden_control(c))
-        .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
+        .map(|c| {
+            if c == '\n' || c == '\t' || is_line_separator(c) {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
 /// Whether `c` may be typed into the search query.  The query is plain text,
 /// one line, matched literally; nothing in it is interpreted.
 pub fn is_query_char(c: char) -> bool {
-    !c.is_control() && !is_hidden_control(c)
+    !c.is_control() && !is_hidden_control(c) && !is_line_separator(c)
 }
 
 /// Clean every string in a parsed document, recursively.
@@ -98,6 +131,18 @@ mod tests {
             clean("a\x1b[31mb\rc\x07\u{202E}d\u{2066}e\te\nf\u{200D}"),
             "a[31mbcde\te\nf\u{200D}"
         );
+    }
+
+    #[test]
+    fn clean_drops_invisible_format_chars_keeps_emoji_joiners() {
+        let hidden =
+            "a\u{200B}b\u{200E}c\u{061C}d\u{00AD}e\u{FEFF}f\u{2060}g\u{E0041}\u{E0042}h\u{E0100}i";
+        assert_eq!(clean(hidden), "abcdefghi");
+        // ZWJ family emoji, ZWNJ (Persian), emoji variation selector survive.
+        let keep = "\u{1F468}\u{200D}\u{1F469} \u{0645}\u{200C}\u{06CC} \u{2764}\u{FE0F}";
+        assert_eq!(clean(keep), keep);
+        assert_eq!(clean("a\u{2028}b\u{2029}c"), "a\nb\nc");
+        assert_eq!(clean_inline("a\u{2028}b"), "a b");
     }
 
     #[test]

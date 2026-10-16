@@ -1,5 +1,10 @@
 name: Tag Release
 
+# On a merge of a `release/X.Y.Z` branch, tag X.Y.Z and start release.yml for
+# it. The tag is pushed with GITHUB_TOKEN, which does not trigger tag-push
+# workflows, so the release has to be dispatched; auto-tag.yml alone left
+# 0.6.1 and 0.6.2 tagged with no release.
+
 on:
   push:
     branches: [main]
@@ -11,9 +16,11 @@ concurrency:
 permissions:
   contents: write
   pull-requests: read
+  actions: write
 
 jobs:
   tag:
-    uses: nikolareljin/ci-helpers/.github/workflows/auto-tag.yml@production
+    uses: nikolareljin/ci-helpers/.github/workflows/auto-tag-release.yml@production
     with:
       update_production_tag: false
+      release_workflow: release.yml

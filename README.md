@@ -109,7 +109,18 @@ vellum --code <file.md>       # open in $EDITOR / bat / less
 vellum --page                 # show author info
 vellum --theme dracula        # preview a theme (no file required)
 vellum --theme dracula <file> # open file with a specific theme
+vellum --remote-images <file> # also fetch https images (off by default)
 ```
+
+## Remote images
+
+Opening a document makes no network requests. A remote image shows as
+`[remote image not loaded: host]`. With `--remote-images` (or
+`VELLUM_REMOTE_IMAGES=1`) vellum fetches them, https only, never from a
+private, loopback or link-local address (redirects included), with a 10 s
+timeout, a 20 MiB cap and a pixel-count limit. `VELLUM_NO_REMOTE_IMAGES=1`
+always turns fetching off. SVG images never load files they reference;
+only inline `data:` images inside an SVG are drawn.
 
 ## Keyboard Shortcuts
 
@@ -124,7 +135,7 @@ vellum --theme dracula <file> # open file with a specific theme
 | `a` | About page |
 | `e` | Code view (spawns `$EDITOR` / `bat` / `less`) |
 | `Tab` / `Shift+Tab` | Cycle links |
-| `c` / `C` | Select next / previous code block |
+| `c` or `]` / `C` or `[` | Select next / previous code block (headers are numbered `1/3`, `2/3`, ...) |
 | `y` / `Enter` | Copy the selected code block to the clipboard |
 | `Enter` | Follow link / confirm search |
 | `/` | Search the document text (plain text, case-insensitive; `Enter` runs it) |

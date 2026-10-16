@@ -32,6 +32,11 @@ pub struct Cli {
     /// Show author and project info
     #[arg(long)]
     pub page: bool,
+
+    /// Fetch remote (https) images.  Off by default: opening a document makes
+    /// no network requests.  Same as VELLUM_REMOTE_IMAGES=1.
+    #[arg(long)]
+    pub remote_images: bool,
 }
 
 const THEME_PREVIEW_MD: &str = r#"
@@ -71,6 +76,9 @@ def greet(name: str) -> str:
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if cli.remote_images {
+        image::set_remote_images(true);
+    }
 
     if cli.page {
         about::print_page();

@@ -671,10 +671,9 @@ fn build_display_lines(
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
                 let is_remote = is_remote_url(&resolved);
-                // true only when fetching is enabled (VELLUM_NO_REMOTE_IMAGES unset);
-                // blocked remote URLs get no Image slot, avoiding a blank gap.
-                let remote_allowed =
-                    is_remote && std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_none();
+                // Remote images get a slot only when the user opted in; otherwise
+                // the text placeholder names the host and nothing is fetched.
+                let remote_allowed = is_remote && crate::image::remote_images_enabled();
                 // Create an Image slot for local readable files and allowed remote URLs.
                 // Missing/blocked sources fall back to the styled text placeholder.
                 if remote_allowed || is_local_file_readable(&resolved) {
@@ -690,7 +689,18 @@ fn build_display_lines(
                         height: h,
                     });
                 } else {
-                    let text_lines = render_elements(std::slice::from_ref(el), theme);
+                    let mut text_lines = render_elements(std::slice::from_ref(el), theme);
+                    if is_remote {
+                        if let Some(first) = text_lines.first_mut() {
+                            first.spans.push(Span::styled(
+                                format!(
+                                    "  [remote image not loaded: {}]",
+                                    crate::image::url_host(&resolved)
+                                ),
+                                Style::default().fg(Color::DarkGray),
+                            ));
+                        }
+                    }
                     for l in text_lines {
                         for wrapped in layout_line(l, wrap_cols) {
                             out.push(DisplayLine::Text(wrapped));
@@ -1029,6 +1039,32 @@ fn locate_code_blocks(elements: &[Element], lines: &[DisplayLine]) -> Vec<CodeBl
         .collect()
 }
 
+/// Write `n/total` after each code block's language label, taking the columns
+/// from the header's padding so the bar keeps its width.  Skipped for a
+/// header too narrow to hold it.
+fn number_code_headers(lines: &mut [DisplayLine], blocks: &[CodeBlockRef]) {
+    let total = blocks.len();
+    for (i, b) in blocks.iter().enumerate() {
+        let Some(DisplayLine::Text(line)) = lines.get_mut(b.header) else {
+            continue;
+        };
+        let Some(label) = line.spans.iter().position(is_copy_label) else {
+            continue;
+        };
+        if label < 2 {
+            continue;
+        }
+        let tag = format!(" {}/{} ", i + 1, total);
+        let pad = line.spans[label - 1].width();
+        if pad < tag.len() + 1 {
+            continue;
+        }
+        line.spans[label - 1].content = " ".repeat(pad - tag.len()).into();
+        let style = line.spans[label - 1].style.add_modifier(Modifier::DIM);
+        line.spans.insert(label - 1, Span::styled(tag, style));
+    }
+}
+
 /// Index of the block that contains display line `entry`.
 fn code_block_at(blocks: &[CodeBlockRef], entry: usize) -> Option<usize> {
     blocks
@@ -1345,6 +1381,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
     };
 
     let code_blocks = locate_code_blocks(&elements, &display_lines);
+    let mut display_lines = display_lines;
+    number_code_headers(&mut display_lines, &code_blocks);
     let mut app = App::new(
         display_lines,
         picker,
@@ -1616,7 +1654,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         Style::default().fg(Color::Yellow),
                     ),
                     Span::styled(
-                        "│ y/Enter copy  c/C next/prev  Esc deselect",
+                        "│ y copy  c next  C prev  Esc done",
                         Style::default().fg(theme.inline.strikethrough.to_color()),
                     ),
                 ])
@@ -1654,9 +1692,15 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             (0, f) => format!("  → [{}]", f),
                             (b, f) => format!("  ← [{}]  → [{}]", b, f),
                         };
+                        // Code navigation goes first: the line is clipped on
+                        // narrow terminals and this is the least obvious key.
+                        let code_hint = match app.code_blocks.len() {
+                            0 => String::new(),
+                            n => format!("c next code block ({n})  │  "),
+                        };
                         Span::raw(format!(
-                            "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  c code blocks  / search  e code  a about  q quit{}",
-                            app.scroll + 1, total, pct, nav_hint,
+                            "  {}/{} ({}%)  │  {}j/k scroll  g/G top/bottom  Tab links  / search  e code  a about  q quit{}",
+                            app.scroll + 1, total, pct, code_hint, nav_hint,
                         ))
                     },
                 ])
@@ -1747,14 +1791,17 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     }
 
                     // ── Code blocks: select, then confirm copy ───────────────
-                    (KeyCode::Char('c'), m) if !m.contains(KeyModifiers::CONTROL) => {
+                    // c / C, or ] / [ as in vim-style viewers.
+                    (KeyCode::Char('c') | KeyCode::Char(']'), m)
+                        if !m.contains(KeyModifiers::CONTROL) =>
+                    {
                         if let Some(i) =
                             step_code_block(&app.code_blocks, app.code_cursor, true, app.scroll)
                         {
                             app.select_code(i, true);
                         }
                     }
-                    (KeyCode::Char('C'), _) => {
+                    (KeyCode::Char('C') | KeyCode::Char('['), _) => {
                         if let Some(i) =
                             step_code_block(&app.code_blocks, app.code_cursor, false, app.scroll)
                         {
@@ -2489,5 +2536,38 @@ mod tests {
                 "line {i} overflows"
             );
         }
+    }
+
+    #[test]
+    fn code_headers_are_numbered_without_changing_width() {
+        let (mut lines, blocks) = code_doc();
+        let widths: Vec<usize> = blocks
+            .iter()
+            .map(|b| match &lines[b.header] {
+                DisplayLine::Text(l) => l.width(),
+                _ => 0,
+            })
+            .collect();
+        number_code_headers(&mut lines, &blocks);
+        for (i, b) in blocks.iter().enumerate() {
+            let t = text_of(&lines, b.header);
+            assert!(t.contains(&format!(" {}/3 ", i + 1)), "{t:?}");
+            let DisplayLine::Text(l) = &lines[b.header] else {
+                unreachable!()
+            };
+            assert_eq!(l.width(), widths[i]);
+            assert!(is_header_line(l), "copy label still found");
+        }
+        // Click target still lands on the label after numbering.
+        let b = &blocks[0];
+        let DisplayLine::Text(h) = &lines[b.header] else {
+            unreachable!()
+        };
+        let drawn = decorate_code_line(h, CodeState::Selected, true, &CodeColors::default());
+        let (start, _) = label_columns(&drawn, SELECTED_LABEL).unwrap();
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, b.header, start),
+            CodeClick::Copy(0)
+        );
     }
 }

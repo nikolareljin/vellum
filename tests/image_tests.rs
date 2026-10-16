@@ -113,7 +113,52 @@ fn test_no_remote_images_env_blocks_fetch() {
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("VELLUM_NO_REMOTE_IMAGES"),
-        "expected env-var name in error, got: {msg}"
+        msg.contains("remote images are off"),
+        "expected the opt-out message, got: {msg}"
+    );
+}
+
+// ── Remote images and SVG references ─────────────────────────────────────────
+
+/// The opt-in is decided once per process; this test owns that decision.
+#[test]
+fn remote_images_are_off_by_default() {
+    use vellum::image::{load_image_url, remote_images_enabled, set_remote_images};
+    let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    if std::env::var_os("VELLUM_REMOTE_IMAGES").is_some() {
+        eprintln!("VELLUM_REMOTE_IMAGES set in the environment; skipping");
+        return;
+    }
+    assert!(
+        !remote_images_enabled(),
+        "remote images must be off by default"
+    );
+    let err = load_image_url("https://example.com/a.png").unwrap_err();
+    assert!(err.to_string().contains("remote images are off"), "{err}");
+
+    // The first decision sticks for the session; a document cannot flip it.
+    set_remote_images(true);
+    assert!(
+        !remote_images_enabled(),
+        "first decision sticks for the session"
+    );
+}
+
+#[test]
+fn svg_cannot_embed_local_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("secret.png");
+    image::RgbImage::from_pixel(4, 4, image::Rgb([255u8, 0, 0]))
+        .save(&png)
+        .unwrap();
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image width="4" height="4" xlink:href="{}"/></svg>"#,
+        png.display()
+    );
+    let img = vellum::svg::rasterize(svg.as_bytes()).unwrap().to_rgba8();
+    assert_eq!(
+        img.get_pixel(1, 1)[3],
+        0,
+        "local file was drawn into the SVG"
     );
 }

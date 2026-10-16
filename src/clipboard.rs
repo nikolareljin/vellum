@@ -102,6 +102,10 @@ fn native_copy(text: &str) -> anyhow::Result<()> {
         let _ = tx.send(matches!(stdout.read(&mut byte), Ok(1)));
     });
     let owned = rx.recv_timeout(HELPER_TIMEOUT).unwrap_or(false);
+    if !owned {
+        // A late helper would take the clipboard after vellum reported failure.
+        let _ = child.kill();
+    }
     // Reap the helper whenever it exits, so it never lingers as a zombie.
     std::thread::spawn(move || {
         let _ = child.wait();

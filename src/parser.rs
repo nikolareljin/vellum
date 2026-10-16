@@ -47,7 +47,10 @@ pub enum Span {
 pub fn parse(input: &str) -> Vec<Element> {
     let opts = Options::all();
     let parser = Parser::new_ext(input, opts);
-    parse_events(parser.collect())
+    let mut elements = parse_events(parser.collect());
+    // Untrusted input: strip invisible control characters before render.
+    crate::sanitize::clean_elements(&mut elements);
+    elements
 }
 
 fn heading_level(level: HeadingLevel) -> u8 {
@@ -534,7 +537,8 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                                 current_row.push(cell_text.clone());
                             }
                         }
-                        Event::Text(t) => cell_text.push_str(t),
+                        // Inline code arrives as its own event; keep its text.
+                        Event::Text(t) | Event::Code(t) => cell_text.push_str(t),
                         Event::End(TagEnd::Table) => break,
                         _ => {}
                     }

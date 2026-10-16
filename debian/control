@@ -21,5 +21,6 @@ Description: Rich Markdown viewer for the terminal
   - Inline images via Kitty/Sixel/iTerm2/halfblock auto-detection
   - Video thumbnail extraction via ffmpeg
   - Link navigation (Tab/Shift+Tab cycle, Enter follows, anchor jumps)
-  - In-document incremental search (/, n/N, Esc)
+  - In-document plain-text search (/, n/N, Esc)
+  - Copy fenced code blocks to the clipboard (c/C or click, then y)
   - Code-view mode (spawns $EDITOR / bat / less)

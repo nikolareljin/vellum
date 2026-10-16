@@ -215,3 +215,25 @@ fn test_full_readme_further_reading_nine_bullets() {
             .collect::<Vec<_>>()
     );
 }
+
+// ── Code block copy label ─────────────────────────────────────────────────────
+
+fn header_text(lang: Option<&str>) -> String {
+    use vellum::parser::Element;
+    let el = Element::CodeBlock {
+        lang: lang.map(str::to_string),
+        code: "x = 1\n".to_string(),
+    };
+    let lines = render_elements(&[el], &Theme::default());
+    lines[0].spans.iter().map(|s| s.content.as_ref()).collect()
+}
+
+#[test]
+fn test_code_block_header_has_copy_label() {
+    use vellum::renderer::COPY_LABEL;
+    for lang in [Some("python"), None] {
+        let header = header_text(lang);
+        assert!(header.trim_end().ends_with(COPY_LABEL), "{header:?}");
+        assert_eq!(header.chars().count(), 64, "{header:?}");
+    }
+}

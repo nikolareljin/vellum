@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Installing vellum</title>
+<!-- seo -->
+<meta name="description" content="Install vellum with Homebrew, a Debian package, prebuilt tarballs for Linux and macOS, a Windows binary, cargo, or from source.">
+<meta name="keywords" content="install, Homebrew, deb, cargo install, Windows, vellum, Markdown viewer, terminal, TUI, Rust, CLI">
+<meta name="author" content="Nik Reljin">
+<link rel="canonical" href="https://nikolareljin.github.io/vellum/install.html">
+<meta property="og:site_name" content="vellum">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Installing vellum">
+<meta property="og:description" content="Install vellum with Homebrew, a Debian package, prebuilt tarballs for Linux and macOS, a Windows binary, cargo, or from source.">
+<meta property="og:url" content="https://nikolareljin.github.io/vellum/install.html">
+<meta property="og:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Installing vellum">
+<meta name="twitter:description" content="Install vellum with Homebrew, a Debian package, prebuilt tarballs for Linux and macOS, a Windows binary, cargo, or from source.">
+<meta name="twitter:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta name="twitter:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Installing vellum","url":"https://nikolareljin.github.io/vellum/install.html","description":"Install vellum with Homebrew, a Debian package, prebuilt tarballs for Linux and macOS, a Windows binary, cargo, or from source.","about":{"@type":"SoftwareApplication","name":"vellum","url":"https://nikolareljin.github.io/vellum/","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS","author":{"@type":"Person","name":"Nik Reljin"}}}</script>
+<!-- /seo -->
+<link rel="icon" href="assets/menu-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/menu-icon.svg" alt=""> vellum</a>
+    <nav class="site">
+      <a href="index.html">Overview</a>
+      <a href="install.html" aria-current="page">Install</a>
+      <a href="usage.html">Usage</a>
+      <a href="help.html">Help</a>
+      <a href="alternatives.html">Alternatives</a>
+      <a href="about.html#tool-suite">Tools</a>
+      <a href="about.html">About</a>
+      <a href="https://github.com/nikolareljin/vellum">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+
+  <p class="tagline">Install</p>
+  <h1>Installing vellum</h1>
+  <p class="lede">vellum is a single binary with no runtime dependencies. Pick the method that suits
+  your platform. Every release is on the
+  <a href="https://github.com/nikolareljin/vellum/releases">GitHub releases page</a>.</p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Platform</th><th>Methods</th></tr></thead>
+    <tbody>
+      <tr><td><strong>macOS</strong> (Apple Silicon, Intel)</td><td><a href="#homebrew">Homebrew</a>, <a href="#tarball">tarball</a>, <a href="#cargo">cargo</a></td></tr>
+      <tr><td><strong>Linux</strong> x86_64</td><td><a href="#homebrew">Homebrew</a>, <a href="#deb">.deb</a>, <a href="#tarball">tarball</a>, <a href="#binary">static binary</a>, <a href="#cargo">cargo</a></td></tr>
+      <tr><td><strong>Linux</strong> arm64 and others</td><td><a href="#cargo">cargo</a>, <a href="#source">from source</a></td></tr>
+      <tr><td><strong>Windows</strong> x86_64</td><td><a href="#windows">vellum-windows.exe</a>, <a href="#cargo">cargo</a>, or Linux in WSL</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="homebrew">Homebrew (macOS and Linux)</h2>
+
+  <p>The tap installs a prebuilt binary: arm64 or x86_64 on macOS, x86_64 on Linux.</p>
+
+<pre><code>brew tap nikolareljin/tap
+brew install vellum</code></pre>
+
+  <p>Upgrade with <code>brew upgrade vellum</code>, remove with <code>brew uninstall vellum</code>.</p>
+
+  <h2 id="deb">Debian and Ubuntu (.deb)</h2>
+
+  <p>Each release carries an amd64 package, named like <code>vellum_0.7.0-1_amd64.deb</code>.
+  Download it from the releases page, then:</p>
+
+<pre><code>sudo apt install ./vellum_0.7.0-1_amd64.deb</code></pre>
+
+  <p>It installs <code>/usr/bin/vellum</code>. Remove it with <code>sudo apt remove vellum</code>.</p>
+
+  <h2 id="tarball">Prebuilt tarballs</h2>
+
+  <p>Each release has three archives, each holding the <code>vellum</code> binary:</p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>File</th><th>For</th></tr></thead>
+    <tbody>
+      <tr><td><code>vellum-&lt;version&gt;-macos-arm64.tar.gz</code></td><td>macOS on Apple Silicon</td></tr>
+      <tr><td><code>vellum-&lt;version&gt;-macos-x86_64.tar.gz</code></td><td>macOS on Intel</td></tr>
+      <tr><td><code>vellum-&lt;version&gt;-linux-x86_64.tar.gz</code></td><td>Linux x86_64 (glibc)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+<pre><code>tar -xzf vellum-0.7.0-linux-x86_64.tar.gz
+install -m 755 vellum ~/.local/bin/vellum</code></pre>
+
+  <p><code>~/.local/bin</code> must be on your <code>PATH</code>.</p>
+
+  <h2 id="binary">Single binaries</h2>
+
+  <p>Releases also carry bare binaries, x86_64 only:</p>
+
+  <ul class="tight">
+    <li><code>vellum-linux</code>: Linux, linked against glibc.</li>
+    <li><code>vellum-musl</code>: Linux, statically linked with musl. Use it on Alpine or an old glibc.</li>
+    <li><code>vellum-windows.exe</code>: Windows, see below.</li>
+  </ul>
+
+<pre><code>chmod +x vellum-musl
+mv vellum-musl ~/.local/bin/vellum</code></pre>
+
+  <h2 id="windows">Windows</h2>
+
+  <p>Download <code>vellum-windows.exe</code> from the releases page, rename it to
+  <code>vellum.exe</code> and put it in a folder on your <code>PATH</code>. Run it in Windows Terminal.
+  Copying code uses <code>clip.exe</code>.</p>
+
+  <p>The Windows build is cross-compiled and less tested than the Linux and macOS ones. One known gap:
+  links to web pages do not open a browser on native Windows. Under WSL, vellum is a normal Linux
+  program, any of the Linux methods above work there, and copying still reaches the Windows
+  clipboard through <code>clip.exe</code>.</p>
+
+  <h2 id="cargo">Cargo (any platform with Rust)</h2>
+
+  <p>Needs Rust 1.79 or newer. This builds the latest code on the default branch:</p>
+
+<pre><code>cargo install --locked --git https://github.com/nikolareljin/vellum --bin vellum</code></pre>
+
+  <p>To build a specific release, add <code>--tag 0.7.0</code>. The binary goes to
+  <code>~/.cargo/bin</code>.</p>
+
+  <h2 id="source">From source</h2>
+
+<pre><code>git clone https://github.com/nikolareljin/vellum
+cd vellum
+cargo build --release
+./target/release/vellum README.md</code></pre>
+
+  <p>On Linux and macOS the repository also has an install script. It builds a release binary and
+  copies it to <code>~/.local/bin</code>:</p>
+
+<pre><code>./install                       <span class="c"># build and install, or upgrade</span>
+./install --prefix /usr/local   <span class="c"># install to /usr/local/bin (may need sudo)</span>
+./install --uninstall</code></pre>
+
+  <p>To build a <code>.deb</code> yourself:</p>
+
+<pre><code>cargo install cargo-deb --locked
+cargo deb
+sudo apt install ./target/debian/vellum_*.deb</code></pre>
+
+  <h2>Optional tools</h2>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Tool</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr><td><code>ffmpeg</code></td><td>Thumbnails for linked videos (<code>.mp4</code>, <code>.webm</code>, <code>.mov</code>, <code>.avi</code>, <code>.mkv</code>).</td></tr>
+      <tr><td><code>wl-copy</code>, <code>xclip</code> or <code>xsel</code></td><td>Copying code blocks on Linux. Without one, vellum uses OSC 52.</td></tr>
+      <tr><td><code>bat</code> or <code>less</code></td><td>The <kbd>e</kbd> code view when <code>$EDITOR</code> and <code>$VISUAL</code> are not set.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Check it works</h2>
+
+<pre><code>vellum --help
+vellum --theme dracula   <span class="c"># opens a preview page in the dracula theme</span></code></pre>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="usage.html">Next: using vellum</a>
+    <a class="btn btn-ghost" href="https://github.com/nikolareljin/vellum/releases">All releases</a>
+  </div>
+
+</div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>vellum - a Markdown viewer for the terminal</span>
+    <span><a href="https://github.com/nikolareljin/vellum">github.com/nikolareljin/vellum</a> - MIT licence</span>
+  </div>
+</footer>
+
+<script src="copy.js" defer></script>
+</body>
+</html>

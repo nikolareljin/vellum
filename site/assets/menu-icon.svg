@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  vellum glyph: a sheet with a folded corner and three text lines, the middle
+  one short like a heading. One colour, transparent background, and no detail
+  thinner than the stroke, so it stays legible at 16px.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <g fill="none" stroke="#5E81AC" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M58 26 H160 L204 70 V230 H58 Z"/>
+    <path d="M160 26 V70 H204"/>
+    <line x1="92" y1="112" x2="170" y2="112"/>
+    <line x1="92" y1="150" x2="140" y2="150"/>
+    <line x1="92" y1="188" x2="170" y2="188"/>
+  </g>
+</svg>

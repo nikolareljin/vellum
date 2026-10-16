@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Using vellum</title>
+<!-- seo -->
+<meta name="description" content="Every vellum key, mouse action, option and environment variable: search, links, copying code over SSH and tmux, images, themes.">
+<meta name="keywords" content="keyboard shortcuts, OSC 52, tmux clipboard, themes, inline images, vellum, Markdown viewer, terminal, TUI, Rust, CLI">
+<meta name="author" content="Nik Reljin">
+<link rel="canonical" href="https://nikolareljin.github.io/vellum/usage.html">
+<meta property="og:site_name" content="vellum">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Using vellum">
+<meta property="og:description" content="Every vellum key, mouse action, option and environment variable: search, links, copying code over SSH and tmux, images, themes.">
+<meta property="og:url" content="https://nikolareljin.github.io/vellum/usage.html">
+<meta property="og:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Using vellum">
+<meta name="twitter:description" content="Every vellum key, mouse action, option and environment variable: search, links, copying code over SSH and tmux, images, themes.">
+<meta name="twitter:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta name="twitter:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Using vellum","url":"https://nikolareljin.github.io/vellum/usage.html","description":"Every vellum key, mouse action, option and environment variable: search, links, copying code over SSH and tmux, images, themes.","about":{"@type":"SoftwareApplication","name":"vellum","url":"https://nikolareljin.github.io/vellum/","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS","author":{"@type":"Person","name":"Nik Reljin"}}}</script>
+<!-- /seo -->
+<link rel="icon" href="assets/menu-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/menu-icon.svg" alt=""> vellum</a>
+    <nav class="site">
+      <a href="index.html">Overview</a>
+      <a href="install.html">Install</a>
+      <a href="usage.html" aria-current="page">Usage</a>
+      <a href="help.html">Help</a>
+      <a href="alternatives.html">Alternatives</a>
+      <a href="about.html#tool-suite">Tools</a>
+      <a href="about.html">About</a>
+      <a href="https://github.com/nikolareljin/vellum">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+
+  <p class="tagline">Usage</p>
+  <h1>Using vellum</h1>
+  <p class="lede">Open a file, read it, search it, follow its links and copy its code. Everything
+  below applies to release 0.7.0.</p>
+
+  <ul class="tight">
+    <li><a href="#open">Opening files</a></li>
+    <li><a href="#keys">Keyboard shortcuts</a></li>
+    <li><a href="#mouse">Mouse</a></li>
+    <li><a href="#search">Search</a></li>
+    <li><a href="#links">Links and history</a></li>
+    <li><a href="#copy">Copying code blocks</a></li>
+    <li><a href="#images">Images and video</a></li>
+    <li><a href="#themes">Themes</a></li>
+    <li><a href="#code-view">Code view and about page</a></li>
+    <li><a href="#hidden">Hidden characters</a></li>
+    <li><a href="#flags">Command-line options</a></li>
+    <li><a href="#env">Environment variables</a></li>
+  </ul>
+
+  <h2 id="open">Opening files</h2>
+
+<pre><code>vellum README.md                  <span class="c"># open in the viewer</span>
+vellum --theme dracula notes.md   <span class="c"># open with a theme</span>
+vellum --theme solarized          <span class="c"># preview a theme on a sample page</span>
+vellum --code README.md           <span class="c"># open in $EDITOR, bat or less instead</span>
+vellum --remote-images README.md  <span class="c"># also fetch https images</span></code></pre>
+
+  <p>A file argument is required unless you pass <code>--theme</code> or <code>--page</code>. The
+  status bar at the bottom shows the file name, the current line and percentage, and the keys that
+  apply right now.</p>
+
+  <h2 id="keys">Keyboard shortcuts</h2>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Key</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>j</kbd> / <kbd>Down</kbd></td><td>Scroll down one line</td></tr>
+      <tr><td><kbd>k</kbd> / <kbd>Up</kbd></td><td>Scroll up one line</td></tr>
+      <tr><td><kbd>PgDn</kbd> / <kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>Page down</td></tr>
+      <tr><td><kbd>PgUp</kbd> / <kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Page up</td></tr>
+      <tr><td><kbd>g</kbd> / <kbd>Home</kbd></td><td>Top of the document</td></tr>
+      <tr><td><kbd>G</kbd> / <kbd>End</kbd></td><td>Bottom of the document</td></tr>
+      <tr><td><kbd>/</kbd></td><td>Start a search</td></tr>
+      <tr><td><kbd>n</kbd> / <kbd>N</kbd></td><td>Next / previous search match</td></tr>
+      <tr><td><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Focus the next / previous link</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>Follow the focused link, run a search, or copy the selected code block</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>Left</kbd> / <kbd>Alt</kbd>+<kbd>Right</kbd></td><td>Back / forward between documents</td></tr>
+      <tr><td><kbd>c</kbd> or <kbd>]</kbd></td><td>Select the next code block</td></tr>
+      <tr><td><kbd>C</kbd> or <kbd>[</kbd></td><td>Select the previous code block</td></tr>
+      <tr><td><kbd>y</kbd></td><td>Copy the selected code block</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Clear the search, or deselect the link or code block</td></tr>
+      <tr><td><kbd>e</kbd></td><td>Code view: open the file in <code>$EDITOR</code>, <code>bat</code> or <code>less</code></td></tr>
+      <tr><td><kbd>a</kbd></td><td>About page</td></tr>
+      <tr><td><kbd>q</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Quit</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="mouse">Mouse</h2>
+
+  <ul class="tight">
+    <li>The wheel scrolls three lines at a time.</li>
+    <li>A click on a link follows it.</li>
+    <li>A click on a code block selects it. A click on its <code>[ y: copy ]</code> label copies it.</li>
+  </ul>
+
+  <h2 id="search">Search</h2>
+
+  <p>Press <kbd>/</kbd>, type the text, press <kbd>Enter</kbd>. The search is plain text and
+  case-insensitive: no regular expressions, no wildcards. Every occurrence is highlighted, the current
+  one in yellow and the rest in cyan, and the status bar shows <code>[2/7]</code> style counts.
+  <kbd>n</kbd> and <kbd>N</kbd> move between matches, <kbd>Esc</kbd> clears them. A search with no hits
+  shows <code>no match</code>.</p>
+
+  <p>The query takes printable characters only, up to 200. <kbd>Backspace</kbd> edits it. While you
+  type, <kbd>q</kbd> is part of the query, not quit. Code block labels such as <code>[copy]</code> are
+  not searched.</p>
+
+  <figure>
+    <img src="assets/screenshot-search.png" width="1160" height="690" loading="lazy"
+         alt="vellum after searching for a word: every occurrence highlighted, the current one in yellow, and the status bar showing the match count and the n/N keys.">
+    <figcaption>A search for a word. The current match is yellow, the others cyan.</figcaption>
+  </figure>
+
+  <h2 id="links">Links and history</h2>
+
+  <p><kbd>Tab</kbd> and <kbd>Shift</kbd>+<kbd>Tab</kbd> move the focus between links. The status bar
+  shows the focused link's target. <kbd>Enter</kbd>, or a click, follows it:</p>
+
+  <ul class="tight">
+    <li><code>#anchor</code> links jump to the heading inside the document.</li>
+    <li>Links to local Markdown files open them in vellum.</li>
+    <li><code>http</code>, <code>https</code> and <code>mailto</code> links open in your default
+    application through <code>xdg-open</code> on Linux or <code>open</code> on macOS.</li>
+  </ul>
+
+  <p>Moving between documents builds a history. <kbd>Alt</kbd>+<kbd>Left</kbd> goes back and
+  <kbd>Alt</kbd>+<kbd>Right</kbd> goes forward; the status bar shows how many steps each way.</p>
+
+  <h2 id="copy">Copying code blocks</h2>
+
+  <p>Copying takes two steps, select then copy, so a stray key or click never overwrites your
+  clipboard.</p>
+
+  <ol class="tight">
+    <li>Select a block. <kbd>c</kbd> or <kbd>]</kbd> selects the next one, <kbd>C</kbd> or <kbd>[</kbd>
+    the previous one, or click it. Block headers are numbered <code>1/3</code>, <code>2/3</code> and so
+    on, and the selected block shows <code>[ y: copy ]</code>.</li>
+    <li>Copy it with <kbd>y</kbd> or <kbd>Enter</kbd>, or click the <code>[ y: copy ]</code> label.</li>
+  </ol>
+
+  <p>The status bar says which method was used. The last copied block stays marked
+  <code>[copied]</code>. <kbd>Esc</kbd> deselects. Hidden control characters such as ESC and CR are
+  never copied.</p>
+
+  <figure>
+    <img src="assets/screenshot-copy.png" width="1160" height="690" loading="lazy"
+         alt="vellum with a code block selected: its header shows the block number and the [ y: copy ] label, and the status bar shows the block's language, line count and the y, c, C and Esc keys.">
+    <figcaption>A code block selected with <kbd>c</kbd>, ready to copy with <kbd>y</kbd>.</figcaption>
+  </figure>
+
+  <h3>How the text reaches the clipboard</h3>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Where vellum runs</th><th>Method</th></tr></thead>
+    <tbody>
+      <tr><td>Linux, Wayland session</td><td><code>wl-copy</code></td></tr>
+      <tr><td>Linux, X11 session</td><td><code>xclip</code>, then <code>xsel</code></td></tr>
+      <tr><td>macOS</td><td><code>pbcopy</code></td></tr>
+      <tr><td>Windows and WSL</td><td><code>clip.exe</code></td></tr>
+      <tr><td>No clipboard tool installed</td><td>The system clipboard directly (nothing to install)</td></tr>
+      <tr><td>No system clipboard either (plain console)</td><td>OSC 52 escape sequence to the terminal</td></tr>
+      <tr><td>Over SSH</td><td>Always OSC 52</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>On Linux, a copy made without a clipboard tool is held by a small
+  <code>vellum --clipboard-daemon</code> process, so it stays available after vellum exits. That
+  process ends as soon as anything else is copied.</p>
+
+  <p>Over SSH a clipboard tool on the remote host would fill the remote clipboard, so vellum skips the
+  tools and sends OSC 52. The terminal on the machine you type at puts the text in its clipboard.
+  vellum treats the session as SSH when <code>SSH_TTY</code>, <code>SSH_CONNECTION</code> or
+  <code>SSH_CLIENT</code> is set.</p>
+
+  <p>OSC 52 needs terminal support. kitty, WezTerm, iTerm2, foot and Windows Terminal allow it; xterm
+  needs <code>allowWindowOps</code>. Inside tmux, set one of these in <code>~/.tmux.conf</code>:</p>
+
+<pre><code>set -g set-clipboard on
+<span class="c"># or</span>
+set -g allow-passthrough on</code></pre>
+
+  <p>OSC 52 copies are limited to about 73 KB of code. vellum refuses a larger block with a message
+  instead of copying part of it. A clipboard tool that hangs is stopped after 2 seconds.</p>
+
+  <h2 id="images">Images and video</h2>
+
+  <p>Markdown images and HTML <code>&lt;img&gt;</code> tags render inline. vellum asks the terminal
+  which graphics protocol it supports and uses the best one: Kitty, then Sixel, then iTerm2. Any other
+  terminal gets half-block characters, which work everywhere at lower resolution. Set
+  <code>VELLUM_PROTOCOL=halfblocks</code> to skip the terminal query and always use half-blocks.</p>
+
+  <p>Links to <code>.mp4</code>, <code>.webm</code>, <code>.mov</code>, <code>.avi</code> and
+  <code>.mkv</code> files show the first frame as a thumbnail when <code>ffmpeg</code> is installed.</p>
+
+  <p>SVG images are rasterised. An SVG never loads files it references; only inline
+  <code>data:</code> images inside it are drawn.</p>
+
+  <h3>Remote images</h3>
+
+  <p>Opening a document makes no network requests. A remote image shows as
+  <code>[remote image not loaded: host]</code>. To fetch them, pass <code>--remote-images</code> or
+  set <code>VELLUM_REMOTE_IMAGES=1</code>. Fetches then:</p>
+
+  <ul class="tight">
+    <li>use https only, redirects included;</li>
+    <li>refuse private, loopback and link-local addresses, checked when the name resolves;</li>
+    <li>time out after 10 seconds and stop at 20 MiB, with a limit on pixel count.</li>
+  </ul>
+
+  <p><code>VELLUM_NO_REMOTE_IMAGES</code> set to any value turns fetching off, even with
+  <code>--remote-images</code>.</p>
+
+  <h2 id="themes">Themes</h2>
+
+  <p>Three themes are built in: <code>dark</code> (the default), <code>dracula</code> and
+  <code>solarized</code>. Pick one with <code>--theme NAME</code> or <code>-t NAME</code>. With no
+  file, vellum shows a sample page in that theme.</p>
+
+  <p>Your own themes are JSON files in <code>~/.config/vellum/themes/</code>, or
+  <code>$XDG_CONFIG_HOME/vellum/themes/</code> when that is set. <code>--theme mine</code> loads
+  <code>mine.json</code>. A user theme with a built-in name replaces the built-in. Fields you leave
+  out take the dark theme's values, so a theme can be a few lines:</p>
+
+<pre><code>{
+  "headings": { "h1": "#ff79c6", "h2": "#bd93f9" },
+  "inline": { "link": "#8be9fd" },
+  "code": {
+    "default_theme": "base16-ocean.dark",
+    "by_language": { "rust": "base16-ocean.dark" }
+  }
+}</code></pre>
+
+  <p>The sections are <code>headings</code> (<code>h1</code> to <code>h6</code>), <code>code</code>
+  (<code>bg</code>, <code>header_bg</code>, <code>label_fg</code>, <code>default_theme</code>,
+  <code>by_language</code>), <code>inline</code> (<code>code_fg</code>, <code>code_bg</code>,
+  <code>link</code>, <code>strikethrough</code>) and <code>blocks</code> (<code>blockquote</code>,
+  <code>hrule</code>, <code>table_border</code>, <code>table_header</code>, <code>list_bullet</code>,
+  <code>image_icon</code>, <code>image_alt</code>). The built-in files in the repository's
+  <a href="https://github.com/nikolareljin/vellum/tree/main/themes"><code>themes/</code></a> folder are
+  complete examples.</p>
+
+  <h2 id="code-view">Code view and about page</h2>
+
+  <p><kbd>e</kbd>, or <code>--code</code> on the command line, opens the raw file in
+  <code>$EDITOR</code>, then <code>$VISUAL</code>, then <code>bat</code>, then <code>less</code>,
+  then <code>cat</code>, whichever is found first. Close it to return to the viewer.</p>
+
+  <p><kbd>a</kbd> prints the author and project information outside the viewer; press
+  <kbd>Enter</kbd> to return. <code>vellum --page</code> prints the same page and exits.</p>
+
+  <h2 id="hidden">Hidden characters</h2>
+
+  <p>A Markdown file can carry characters you cannot see: terminal escape sequences, carriage returns,
+  bidirectional marks, zero-width characters and tag characters. vellum strips them from the text,
+  link targets, status messages and the file name before it displays, searches or copies anything. A
+  file cannot move your cursor, recolour your terminal or hide text in a copied command. Emoji joiners
+  and variation selectors are kept, so emoji still render.</p>
+
+  <h2 id="flags">Command-line options</h2>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt;FILE&gt;</code></td><td>Markdown file to open</td></tr>
+      <tr><td><code>-t</code>, <code>--theme &lt;NAME&gt;</code></td><td>Colour theme: <code>dark</code>, <code>dracula</code>, <code>solarized</code> or a user theme</td></tr>
+      <tr><td><code>-c</code>, <code>--code</code></td><td>Open the file in code view instead of the viewer</td></tr>
+      <tr><td><code>--page</code></td><td>Print author and project information</td></tr>
+      <tr><td><code>--remote-images</code></td><td>Fetch https images; same as <code>VELLUM_REMOTE_IMAGES=1</code></td></tr>
+      <tr><td><code>-h</code>, <code>--help</code></td><td>Show help</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="env">Environment variables</h2>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>VELLUM_REMOTE_IMAGES=1</code></td><td>Fetch remote https images</td></tr>
+      <tr><td><code>VELLUM_NO_REMOTE_IMAGES</code></td><td>Any value: never fetch remote images</td></tr>
+      <tr><td><code>VELLUM_PROTOCOL=halfblocks</code></td><td>Draw images with half-blocks; skip the terminal query</td></tr>
+      <tr><td><code>XDG_CONFIG_HOME</code></td><td>Where user themes are looked up (<code>vellum/themes/</code> under it)</td></tr>
+      <tr><td><code>EDITOR</code>, <code>VISUAL</code></td><td>Program used by code view</td></tr>
+      <tr><td><code>TMUX</code></td><td>Set by tmux; vellum wraps OSC 52 for it</td></tr>
+      <tr><td><code>SSH_TTY</code>, <code>SSH_CONNECTION</code>, <code>SSH_CLIENT</code></td><td>Set by SSH; vellum copies with OSC 52 only</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="help.html">Troubleshooting</a>
+    <a class="btn btn-ghost" href="install.html">Install</a>
+  </div>
+
+</div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>vellum - a Markdown viewer for the terminal</span>
+    <span><a href="https://github.com/nikolareljin/vellum">github.com/nikolareljin/vellum</a> - MIT licence</span>
+  </div>
+</footer>
+
+<script src="copy.js" defer></script>
+</body>
+</html>

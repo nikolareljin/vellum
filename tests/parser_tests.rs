@@ -299,3 +299,15 @@ fn test_full_readme_further_reading_nine_items() {
         );
     }
 }
+
+#[test]
+fn test_table_cells_keep_inline_code() {
+    let els = parse("| Key | Action |\n|---|---|\n| `/` | search `text` |\n");
+    match &els[0] {
+        Element::Table { headers, rows } => {
+            assert_eq!(headers, &["Key", "Action"]);
+            assert_eq!(rows, &[vec!["/".to_string(), "search text".to_string()]]);
+        }
+        other => panic!("expected table, got {other:?}"),
+    }
+}

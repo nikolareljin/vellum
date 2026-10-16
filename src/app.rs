@@ -3,14 +3,16 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -23,9 +25,10 @@ use ratatui_image::{Resize, StatefulImage};
 use crate::image::{is_remote_url, safe_error_url, ImageCache};
 use crate::links::{anchor_from_heading, open_url};
 use crate::parser::{self, Element};
-use crate::renderer::render_elements;
+use crate::renderer::{render_elements, COPY_LABEL};
+use crate::sanitize::{clean_inline, is_hidden_control, is_query_char, MAX_QUERY_CHARS};
 use crate::search::{search_lines, SearchResult};
-use crate::theme::Theme;
+use crate::theme::{CodeColors, Theme};
 use crate::video::extract_thumbnail;
 
 // ── Navigation history ────────────────────────────────────────────────────────
@@ -108,6 +111,14 @@ struct App {
     /// (href, rendered-line-offset)
     doc_links: Vec<(String, usize)>,
     link_cursor: Option<usize>,
+    /// Fenced code blocks in display order.
+    code_blocks: Vec<CodeBlockRef>,
+    /// Selected code block (`c`/`C` or click).  Exclusive with `link_cursor`.
+    code_cursor: Option<usize>,
+    /// Last block copied to the clipboard; stays marked until another copy.
+    copied_block: Option<usize>,
+    /// One-off status message (copy result) and when it was set.
+    flash: Option<(String, std::time::Instant)>,
     anchor_map: std::collections::HashMap<String, usize>,
     /// Keep temp files alive for the session (drop = delete)
     _thumb_files: Vec<tempfile::NamedTempFile>,
@@ -135,6 +146,7 @@ impl App {
         lines: Vec<DisplayLine>,
         picker: Picker,
         doc_links: Vec<(String, usize)>,
+        code_blocks: Vec<CodeBlockRef>,
         anchor_map: std::collections::HashMap<String, usize>,
         thumb_files: Vec<tempfile::NamedTempFile>,
     ) -> Self {
@@ -148,6 +160,10 @@ impl App {
             image_cache: Default::default(),
             doc_links,
             link_cursor: None,
+            code_blocks,
+            code_cursor: None,
+            copied_block: None,
+            flash: None,
             anchor_map,
             _thumb_files: thumb_files,
             search_mode: false,
@@ -210,6 +226,73 @@ impl App {
     fn goto_top(&mut self) {
         self.scroll = 0;
     }
+    /// Select code block `i`; clears any focused link.  With `reveal`, scroll
+    /// so the header is visible if it is not already.
+    fn select_code(&mut self, i: usize, reveal: bool) {
+        self.code_cursor = Some(i);
+        self.link_cursor = None;
+        let header = self.code_blocks[i].header;
+        if reveal && !(self.scroll..self.scroll + self.viewport_height.max(1)).contains(&header) {
+            self.scroll = header.min(self.max_scroll());
+        }
+    }
+
+    /// Copy the selected block to the clipboard and report the result.
+    fn copy_selected(&mut self, copy: impl FnOnce(&str) -> anyhow::Result<&'static str>) {
+        let Some(i) = self.code_cursor else { return };
+        let block = &self.code_blocks[i];
+        let msg = match copy(&block.copy_text()) {
+            Ok(method) => {
+                self.copied_block = Some(i);
+                let n = block.line_count();
+                let hidden = block.hidden_controls();
+                format!(
+                    "copied code block {}/{} ({} line{}) to clipboard via {}{}",
+                    i + 1,
+                    self.code_blocks.len(),
+                    n,
+                    if n == 1 { "" } else { "s" },
+                    method,
+                    if hidden > 0 {
+                        format!(", {hidden} hidden control character(s) removed")
+                    } else {
+                        String::new()
+                    }
+                )
+            }
+            Err(e) => format!("copy failed: {e}"),
+        };
+        self.flash = Some((msg, std::time::Instant::now()));
+    }
+
+    /// Display line `idx`, restyled when it belongs to a selected or copied block.
+    fn display_text(&self, idx: usize, line: &Line<'static>, code: &CodeColors) -> Line<'static> {
+        let Some(b) = code_block_at(&self.code_blocks, idx) else {
+            return line.clone();
+        };
+        let state = match (self.code_cursor == Some(b), self.copied_block == Some(b)) {
+            (true, true) => CodeState::SelectedCopied,
+            (true, false) => CodeState::Selected,
+            (false, true) => CodeState::Copied,
+            (false, false) => return line.clone(),
+        };
+        decorate_code_line(line, state, idx == self.code_blocks[b].header, code)
+    }
+
+    /// Highlight occurrences of the active search query on display line `idx`.
+    /// The line holding the current result is marked more strongly.
+    fn search_highlight(&self, idx: usize, line: Line<'static>) -> Line<'static> {
+        if self.search_results.is_empty() || is_header_line(&line) {
+            return line;
+        }
+        let current = self
+            .search_results
+            .get(self.search_cursor)
+            .and_then(|r| self.search_line_map.get(r.line_index))
+            == Some(&idx);
+        highlight_matches(line, &self.search_query, current)
+    }
+
     fn goto_bottom(&mut self) {
         self.scroll = self.max_scroll();
     }
@@ -233,6 +316,39 @@ fn chars_to_line(chars: Vec<(char, ratatui::style::Style)>) -> Line<'static> {
         spans.push(Span::styled(buf, cur_style));
     }
     Line::from(spans)
+}
+
+/// Lay out one rendered line at `max_width` columns.  Code block header bars
+/// and bottom rules are fitted, never wrapped: a wrap could split the copy
+/// label or move part of the block outside its tracked range.
+fn layout_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
+    if is_header_line(&line) || is_rule_line(&line) {
+        vec![fit_chrome(line, max_width)]
+    } else {
+        wrap_line(line, max_width)
+    }
+}
+
+/// Shrink a code block header or rule to `max_width` columns: the header
+/// gives up padding before its copy label, the rule gets shorter.  Other
+/// lines are returned unchanged.
+fn fit_chrome(mut line: Line<'static>, max_width: usize) -> Line<'static> {
+    let over = line.width().saturating_sub(max_width);
+    if over == 0 {
+        return line;
+    }
+    if let Some(idx) = line.spans.iter().position(is_copy_label) {
+        if idx > 0 {
+            let pad = line.spans[idx - 1].width();
+            line.spans[idx - 1].content = " ".repeat(pad.saturating_sub(over).max(1)).into();
+        }
+    } else if let Some(span) = line.spans.iter_mut().find(|s| {
+        s.style.bg.is_none() && s.content.chars().all(|c| c == '─') && !s.content.is_empty()
+    }) {
+        let keep = span.width().saturating_sub(over).max(1);
+        span.content = "─".repeat(keep).into();
+    }
+    line
 }
 
 /// Word-wrap a styled `Line` into multiple `Line`s, each ≤ `max_width` chars wide.
@@ -554,10 +670,9 @@ fn build_display_lines(
             Element::Image { src, .. } => {
                 let resolved = resolve_path(src, base_dir);
                 let is_remote = is_remote_url(&resolved);
-                // true only when fetching is enabled (VELLUM_NO_REMOTE_IMAGES unset);
-                // blocked remote URLs get no Image slot, avoiding a blank gap.
-                let remote_allowed =
-                    is_remote && std::env::var_os("VELLUM_NO_REMOTE_IMAGES").is_none();
+                // Remote images get a slot only when the user opted in; otherwise
+                // the text placeholder names the host and nothing is fetched.
+                let remote_allowed = is_remote && crate::image::remote_images_enabled();
                 // Create an Image slot for local readable files and allowed remote URLs.
                 // Missing/blocked sources fall back to the styled text placeholder.
                 if remote_allowed || is_local_file_readable(&resolved) {
@@ -573,9 +688,20 @@ fn build_display_lines(
                         height: h,
                     });
                 } else {
-                    let text_lines = render_elements(std::slice::from_ref(el), theme);
+                    let mut text_lines = render_elements(std::slice::from_ref(el), theme);
+                    if is_remote {
+                        if let Some(first) = text_lines.first_mut() {
+                            first.spans.push(Span::styled(
+                                format!(
+                                    "  [remote image not loaded: {}]",
+                                    crate::image::url_host(&resolved)
+                                ),
+                                Style::default().fg(Color::DarkGray),
+                            ));
+                        }
+                    }
                     for l in text_lines {
-                        for wrapped in wrap_line(l, wrap_cols) {
+                        for wrapped in layout_line(l, wrap_cols) {
                             out.push(DisplayLine::Text(wrapped));
                         }
                     }
@@ -604,7 +730,7 @@ fn build_display_lines(
                         // ffmpeg missing or file unreadable — text placeholder
                         let text_lines = render_elements(std::slice::from_ref(el), theme);
                         for l in text_lines {
-                            for wrapped in wrap_line(l, wrap_cols) {
+                            for wrapped in layout_line(l, wrap_cols) {
                                 out.push(DisplayLine::Text(wrapped));
                             }
                         }
@@ -614,7 +740,7 @@ fn build_display_lines(
             Element::Heading { text, .. } => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -624,7 +750,7 @@ fn build_display_lines(
                 // Render full list for display (preserves ordered-list numbering).
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -659,7 +785,7 @@ fn build_display_lines(
                             } else {
                                 wrap_cols
                             };
-                            wrap_line(l.clone(), w).len()
+                            layout_line(l.clone(), w).len()
                         })
                         .sum::<usize>()
                         .saturating_sub(1);
@@ -679,7 +805,7 @@ fn build_display_lines(
                         );
                         let el_lines: usize = render_elements(std::slice::from_ref(item_el), theme)
                             .iter()
-                            .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                            .map(|l| layout_line(l.clone(), wrap_cols).len())
                             .sum::<usize>()
                             .saturating_sub(1);
                         el_off += el_lines.max(1);
@@ -689,7 +815,7 @@ fn build_display_lines(
             Element::BlockQuote(inner) => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -700,7 +826,7 @@ fn build_display_lines(
                     let single = Element::BlockQuote(vec![inner_el.clone()]);
                     let inner_lines: usize = render_elements(std::slice::from_ref(&single), theme)
                         .iter()
-                        .map(|l| wrap_line(l.clone(), wrap_cols).len())
+                        .map(|l| layout_line(l.clone(), wrap_cols).len())
                         .sum::<usize>()
                         .saturating_sub(1);
                     inner_disp += inner_lines.max(1);
@@ -717,7 +843,7 @@ fn build_display_lines(
             Element::Paragraph(spans) => {
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in &text_lines {
-                    for wrapped in wrap_line(l.clone(), wrap_cols) {
+                    for wrapped in layout_line(l.clone(), wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -749,14 +875,14 @@ fn build_display_lines(
                 // whitespace and corrupts indentation / table alignment.
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    out.push(DisplayLine::Text(l));
+                    out.push(DisplayLine::Text(fit_chrome(l, wrap_cols)));
                 }
             }
             _ => {
                 // HRule and any future prose elements
                 let text_lines = render_elements(std::slice::from_ref(el), theme);
                 for l in text_lines {
-                    for wrapped in wrap_line(l, wrap_cols) {
+                    for wrapped in layout_line(l, wrap_cols) {
                         out.push(DisplayLine::Text(wrapped));
                     }
                 }
@@ -794,6 +920,345 @@ fn follow_link(href: &str, file: &Path) -> Option<std::path::PathBuf> {
         let _ = open_url(href);
     }
     None
+}
+
+// ── Code blocks: select and copy ──────────────────────────────────────────────
+
+/// A rendered fenced code block: its source and the display lines it spans.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodeBlockRef {
+    pub code: String,
+    pub lang: Option<String>,
+    /// Display-line index of the header bar (the one holding `COPY_LABEL`).
+    pub header: usize,
+    /// Display-line index of the bottom rule (inclusive end of the block).
+    pub end: usize,
+}
+
+impl CodeBlockRef {
+    fn raw(&self) -> &str {
+        self.code.strip_suffix('\n').unwrap_or(&self.code)
+    }
+
+    /// Text that goes to the clipboard: the block minus the final newline and
+    /// minus `is_hidden_control` characters, so the paste is what the reader
+    /// saw, not e.g. a command hidden behind an ESC sequence.
+    pub fn copy_text(&self) -> String {
+        self.raw()
+            .chars()
+            .filter(|&c| !is_hidden_control(c))
+            .collect()
+    }
+
+    /// Number of control characters `copy_text` drops.
+    pub fn hidden_controls(&self) -> usize {
+        self.raw().chars().filter(|&c| is_hidden_control(c)).count()
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.raw().lines().count().max(1)
+    }
+}
+
+/// Every fenced code block in document order, including those nested in
+/// lists and block quotes.  Matches the order their header bars are rendered in.
+fn collect_code_sources(elements: &[Element], out: &mut Vec<(String, Option<String>)>) {
+    for el in elements {
+        match el {
+            Element::CodeBlock { lang, code } => out.push((code.clone(), lang.clone())),
+            Element::List { items, .. } => {
+                for item in items {
+                    collect_code_sources(item, out);
+                }
+            }
+            Element::BlockQuote(inner) => collect_code_sources(inner, out),
+            _ => {}
+        }
+    }
+}
+
+/// The header bar: the `COPY_LABEL` span as the renderer styles it (dim, on
+/// the header background), so the same text in prose or code never matches.
+fn is_copy_label(span: &Span<'_>) -> bool {
+    span.content == COPY_LABEL
+        && span.style.bg.is_some()
+        && span.style.add_modifier.contains(Modifier::DIM)
+}
+
+fn is_header_line(line: &Line<'_>) -> bool {
+    line.spans.iter().any(is_copy_label)
+}
+
+/// The bottom rule of a code block: a run of `─` with no background.
+/// Code text never matches because highlighted spans always carry a background.
+/// Any other span may only be indent or quote/list markers: a paragraph that
+/// merely contains a run of `─` must wrap, not be shortened.
+fn is_rule_line(line: &Line<'_>) -> bool {
+    let is_run = |s: &Span<'_>| {
+        s.style.bg.is_none()
+            && s.content.chars().count() >= 8
+            && s.content.chars().all(|c| c == '─')
+    };
+    line.spans.iter().any(is_run)
+        && line
+            .spans
+            .iter()
+            .all(|s| is_run(s) || !s.content.chars().any(char::is_alphanumeric))
+}
+
+/// Locate each code block's header and bottom rule in the display lines.
+fn locate_code_blocks(elements: &[Element], lines: &[DisplayLine]) -> Vec<CodeBlockRef> {
+    let mut sources = Vec::new();
+    collect_code_sources(elements, &mut sources);
+    let text = |i: usize| match &lines[i] {
+        DisplayLine::Text(l) => Some(l),
+        DisplayLine::Image { .. } => None,
+    };
+    let headers: Vec<usize> = (0..lines.len())
+        .filter(|&i| text(i).is_some_and(is_header_line))
+        .collect();
+    if headers.len() != sources.len() {
+        // Pairing by order would hand out the wrong text; offer no copy instead.
+        return Vec::new();
+    }
+    sources
+        .into_iter()
+        .zip(headers)
+        .map(|((code, lang), header)| {
+            let end = (header + 1..lines.len())
+                .find(|&i| text(i).is_some_and(is_rule_line))
+                .unwrap_or(header);
+            CodeBlockRef {
+                code,
+                lang,
+                header,
+                end,
+            }
+        })
+        .collect()
+}
+
+/// Write `n/total` after each code block's language label, taking the columns
+/// from the header's padding so the bar keeps its width.  Skipped for a
+/// header too narrow to hold it.
+fn number_code_headers(lines: &mut [DisplayLine], blocks: &[CodeBlockRef]) {
+    let total = blocks.len();
+    for (i, b) in blocks.iter().enumerate() {
+        let Some(DisplayLine::Text(line)) = lines.get_mut(b.header) else {
+            continue;
+        };
+        let Some(label) = line.spans.iter().position(is_copy_label) else {
+            continue;
+        };
+        if label < 2 {
+            continue;
+        }
+        let tag = format!(" {}/{} ", i + 1, total);
+        let pad = line.spans[label - 1].width();
+        if pad < tag.len() + 1 {
+            continue;
+        }
+        line.spans[label - 1].content = " ".repeat(pad - tag.len()).into();
+        let style = line.spans[label - 1].style.add_modifier(Modifier::DIM);
+        line.spans.insert(label - 1, Span::styled(tag, style));
+    }
+}
+
+/// Index of the block that contains display line `entry`.
+fn code_block_at(blocks: &[CodeBlockRef], entry: usize) -> Option<usize> {
+    blocks
+        .iter()
+        .position(|b| (b.header..=b.end).contains(&entry))
+}
+
+/// Next (or previous) block for `c` / `C`.  With nothing selected, start from
+/// the first block that reaches the top of the viewport (or the last one above
+/// it when going backwards), so the first press lands on something visible.
+fn step_code_block(
+    blocks: &[CodeBlockRef],
+    current: Option<usize>,
+    forward: bool,
+    scroll: usize,
+) -> Option<usize> {
+    let n = blocks.len();
+    if n == 0 {
+        return None;
+    }
+    Some(match (current, forward) {
+        (Some(i), true) => (i + 1) % n,
+        (Some(i), false) => (i + n - 1) % n,
+        (None, true) => blocks.iter().position(|b| b.end >= scroll).unwrap_or(0),
+        (None, false) => blocks
+            .iter()
+            .rposition(|b| b.header < scroll)
+            .unwrap_or(n - 1),
+    })
+}
+
+/// What a left click on display line `entry`, terminal column `col` does.
+#[derive(Debug, PartialEq)]
+enum CodeClick {
+    /// Not on a code block.
+    Miss,
+    /// Select block i.  Nothing is copied.
+    Select(usize),
+    /// Copy block i: a click on the label of the block that is already selected.
+    Copy(usize),
+}
+
+fn code_click(
+    blocks: &[CodeBlockRef],
+    lines: &[DisplayLine],
+    selected: Option<usize>,
+    copied: Option<usize>,
+    entry: usize,
+    col: usize,
+) -> CodeClick {
+    let Some(i) = code_block_at(blocks, entry) else {
+        return CodeClick::Miss;
+    };
+    if selected == Some(i) && entry == blocks[i].header {
+        if let Some(DisplayLine::Text(line)) = lines.get(entry) {
+            // Measure the label as drawn: decoration only changes geometry,
+            // so the theme colours do not matter here.
+            let (state, label) = if copied == Some(i) {
+                (CodeState::SelectedCopied, COPIED_SELECTED_LABEL)
+            } else {
+                (CodeState::Selected, SELECTED_LABEL)
+            };
+            let drawn = decorate_code_line(line, state, true, &CodeColors::default());
+            if let Some((start, width)) = label_columns(&drawn, label) {
+                if (start..start + width).contains(&col) {
+                    return CodeClick::Copy(i);
+                }
+            }
+        }
+    }
+    CodeClick::Select(i)
+}
+
+/// Terminal column range `(start, width)` of the span reading `label` on a
+/// decorated header line.  Widths are display columns (CJK counts 2).
+fn label_columns(line: &Line<'_>, label: &str) -> Option<(usize, usize)> {
+    let idx = line.spans.iter().position(|s| s.content == label)?;
+    let start = line.spans[..idx].iter().map(|s| s.width()).sum();
+    Some((start, line.spans[idx].width()))
+}
+
+const SELECTED_LABEL: &str = "[ y: copy ]";
+const COPIED_LABEL: &str = "[copied]";
+const COPIED_SELECTED_LABEL: &str = "[copied - y: copy again]";
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CodeState {
+    Selected,
+    Copied,
+    SelectedCopied,
+}
+
+/// Restyle one display line of a code block for its state.  Header: label text
+/// and bar colour.  Body: a coloured gutter bar.  Bottom rule: colour.
+fn decorate_code_line(
+    line: &Line<'static>,
+    state: CodeState,
+    is_header: bool,
+    code: &CodeColors,
+) -> Line<'static> {
+    let accent = match state {
+        CodeState::Copied => Color::Green,
+        CodeState::Selected | CodeState::SelectedCopied => Color::Yellow,
+    };
+    let mut line = line.clone();
+    if is_header {
+        let label = match state {
+            CodeState::Selected => SELECTED_LABEL,
+            CodeState::Copied => COPIED_LABEL,
+            CodeState::SelectedCopied => COPIED_SELECTED_LABEL,
+        };
+        if let Some(idx) = line.spans.iter().position(is_copy_label) {
+            // Keep the bar width: the wider label takes columns from the padding.
+            let grow = label.len().saturating_sub(COPY_LABEL.len());
+            if idx > 0 {
+                let pad = line.spans[idx - 1].width();
+                line.spans[idx - 1].content = " ".repeat(pad.saturating_sub(grow).max(1)).into();
+            }
+            line.spans[idx].content = label.into();
+            line.spans[idx].style = Style::default()
+                .fg(Color::Black)
+                .bg(accent)
+                .add_modifier(Modifier::BOLD);
+        }
+        if state != CodeState::Copied {
+            let header_bg = code.header_bg.to_color();
+            for span in &mut line.spans {
+                if span.style.bg == Some(header_bg) {
+                    span.style = span.style.bg(Color::DarkGray);
+                }
+            }
+        }
+    } else if is_rule_line(&line) {
+        for span in &mut line.spans {
+            if span.style.bg.is_none() && span.content.chars().all(|c| c == '─') {
+                span.style = span.style.fg(accent);
+            }
+        }
+    } else {
+        // Body: the 2-column left gutter is the first span on the code background.
+        let code_bg = code.bg.to_color();
+        if let Some(span) = line
+            .spans
+            .iter_mut()
+            .find(|s| s.content == "  " && s.style.bg == Some(code_bg))
+        {
+            span.content = "▌ ".into();
+            span.style = span.style.fg(accent);
+        }
+    }
+    line
+}
+
+/// Whether a key press may add `ch` to the search query: printable plain
+/// text, no Ctrl or Alt chord, at most `MAX_QUERY_CHARS` characters.
+/// Ctrl and Alt together is AltGr on Windows (`@`, `{`, `\` on many layouts).
+fn accept_query_char(query: &str, ch: char, mods: KeyModifiers) -> bool {
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    ctrl == alt && is_query_char(ch) && query.chars().count() < MAX_QUERY_CHARS
+}
+
+/// Restyle the characters of `line` that match `query` (see `find_matches`).
+fn highlight_matches(line: Line<'static>, query: &str, current: bool) -> Line<'static> {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let ranges = crate::search::find_matches(&text, query);
+    if ranges.is_empty() {
+        return line;
+    }
+    let hit = if current {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    };
+    let in_match = |pos: usize| ranges.iter().any(|&(s, l)| (s..s + l).contains(&pos));
+    let mut chars = Vec::new();
+    let mut pos = 0;
+    for span in &line.spans {
+        for c in span.content.chars() {
+            let style = if in_match(pos) {
+                span.style.patch(hit)
+            } else {
+                span.style
+            };
+            chars.push((c, style));
+            pos += 1;
+        }
+    }
+    let mut out = chars_to_line(chars);
+    out.alignment = line.alignment;
+    out.style = line.style;
+    out
 }
 
 /// Convert a terminal viewport row into the absolute entry index in `lines`,
@@ -894,11 +1359,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
         max_h,
         img_fallback_h,
     );
-    let fname = file
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let fname = clean_inline(&file.file_name().unwrap_or_default().to_string_lossy());
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -918,7 +1379,17 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
         Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
     };
 
-    let mut app = App::new(display_lines, picker, doc_links, anchor_map, thumb_files);
+    let code_blocks = locate_code_blocks(&elements, &display_lines);
+    let mut display_lines = display_lines;
+    number_code_headers(&mut display_lines, &code_blocks);
+    let mut app = App::new(
+        display_lines,
+        picker,
+        doc_links,
+        code_blocks,
+        anchor_map,
+        thumb_files,
+    );
 
     // Prime viewport_height before the first iteration so the initial image
     // prefetch covers the full visible area rather than the default of 0.
@@ -1042,14 +1513,14 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
             // below is the sole stop condition.
             let mut y_offset = 0u16;
 
-            for dl in app.lines.iter().skip(app.scroll) {
+            for (idx, dl) in app.lines.iter().enumerate().skip(app.scroll) {
                 if y_offset >= content_area.height {
                     break;
                 }
                 match dl {
                     DisplayLine::Text(line) => {
                         f.render_widget(
-                            Paragraph::new(line.clone())
+                            Paragraph::new(app.search_highlight(idx, app.display_text(idx, line, &theme.code)))
                                 .block(Block::default().borders(Borders::NONE)),
                             Rect {
                                 x: content_area.x,
@@ -1151,6 +1622,41 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::Yellow)),
                     Span::raw(format!("{}_", app.search_query)),
                 ])
+            } else if let Some((msg, _)) = app
+                .flash
+                .as_ref()
+                .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(2))
+            {
+                let ok = msg.starts_with("copied");
+                Line::from(vec![
+                    Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                    Span::styled(
+                        format!("  {}", clean_inline(msg)),
+                        Style::default().fg(if ok { Color::Green } else { Color::Red }),
+                    ),
+                ])
+            } else if let Some(i) = app.code_cursor {
+                let b = &app.code_blocks[i];
+                let n = b.line_count();
+                Line::from(vec![
+                    Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                    Span::styled(
+                        format!(
+                            "  code {}/{}  {}  {} line{}{}  ",
+                            i + 1,
+                            app.code_blocks.len(),
+                            b.lang.as_deref().unwrap_or("text"),
+                            n,
+                            if n == 1 { "" } else { "s" },
+                            if app.copied_block == Some(i) { "  (copied)" } else { "" },
+                        ),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(
+                        "│ y copy  c next  C prev  Esc done",
+                        Style::default().fg(theme.inline.strikethrough.to_color()),
+                    ),
+                ])
             } else if !app.search_results.is_empty() {
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
@@ -1165,7 +1671,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                     Span::styled(
-                        format!("  → {}  ", href),
+                        format!("  → {}  ", clean_inline(href)),
                         Style::default().fg(theme.inline.link.to_color()),
                     ),
                     Span::styled(
@@ -1185,9 +1691,15 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                             (0, f) => format!("  → [{}]", f),
                             (b, f) => format!("  ← [{}]  → [{}]", b, f),
                         };
+                        // Code navigation goes first: the line is clipped on
+                        // narrow terminals and this is the least obvious key.
+                        let code_hint = match app.code_blocks.len() {
+                            0 => String::new(),
+                            n => format!("c next code block ({n})  │  "),
+                        };
                         Span::raw(format!(
-                            "  {}/{} ({}%)  │  j/k scroll  g/G top/bottom  Tab links  / search  e code  a about  q quit{}",
-                            app.scroll + 1, total, pct, nav_hint,
+                            "  {}/{} ({}%)  │  {}j/k scroll  g/G top/bottom  Tab links  / search  e code  a about  q quit{}",
+                            app.scroll + 1, total, pct, code_hint, nav_hint,
                         ))
                     },
                 ])
@@ -1204,20 +1716,27 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
+                // Windows also reports key releases; act on press and repeat only,
+                // or every key would count twice.
                 Event::Key(KeyEvent {
-                    code, modifiers, ..
-                }) => match (code, modifiers) {
-                    (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        break 'main NavAction::Quit;
-                    }
+                    code,
+                    modifiers,
+                    kind,
+                    ..
+                }) if kind != KeyEventKind::Release => match (code, modifiers) {
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => break 'main NavAction::Quit,
+                    // While typing a search, `q` is text, not quit.
+                    (KeyCode::Char('q'), _) if !app.search_mode => break 'main NavAction::Quit,
 
                     // ── History navigation ───────────────────────────────────
                     (KeyCode::Left, KeyModifiers::ALT) => break 'main NavAction::Back,
                     (KeyCode::Right, KeyModifiers::ALT) => break 'main NavAction::Forward,
 
                     // ── Search mode input ────────────────────────────────────
-                    (KeyCode::Char(ch), _) if app.search_mode => {
-                        app.search_query.push(ch);
+                    (KeyCode::Char(ch), m) if app.search_mode => {
+                        if accept_query_char(&app.search_query, ch, m) {
+                            app.search_query.push(ch);
+                        }
                     }
                     (KeyCode::Backspace, _) if app.search_mode => {
                         app.search_query.pop();
@@ -1231,11 +1750,22 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         let mut search_line_map = Vec::new();
                         for (i, dl) in app.lines.iter().enumerate() {
                             if let DisplayLine::Text(l) = dl {
-                                text_lines.push(l.clone());
+                                // Content only: code block header bars are UI.
+                                text_lines.push(if is_header_line(l) {
+                                    Line::default()
+                                } else {
+                                    l.clone()
+                                });
                                 search_line_map.push(i);
                             }
                         }
                         app.search_results = search_lines(&text_lines, &app.search_query);
+                        if app.search_results.is_empty() && !app.search_query.is_empty() {
+                            app.flash = Some((
+                                format!("no match for \"{}\"", app.search_query),
+                                std::time::Instant::now(),
+                            ));
+                        }
                         app.search_line_map = search_line_map;
                         app.search_cursor = 0;
                         if let Some(r) = app.search_results.first() {
@@ -1256,6 +1786,29 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         app.search_results.clear();
                         app.search_cursor = 0;
                         app.link_cursor = None;
+                        app.code_cursor = None;
+                    }
+
+                    // ── Code blocks: select, then confirm copy ───────────────
+                    // c / C, or ] / [ as in vim-style viewers.
+                    (KeyCode::Char('c') | KeyCode::Char(']'), m)
+                        if !m.contains(KeyModifiers::CONTROL) =>
+                    {
+                        if let Some(i) =
+                            step_code_block(&app.code_blocks, app.code_cursor, true, app.scroll)
+                        {
+                            app.select_code(i, true);
+                        }
+                    }
+                    (KeyCode::Char('C') | KeyCode::Char('['), _) => {
+                        if let Some(i) =
+                            step_code_block(&app.code_blocks, app.code_cursor, false, app.scroll)
+                        {
+                            app.select_code(i, true);
+                        }
+                    }
+                    (KeyCode::Char('y'), _) | (KeyCode::Enter, _) if app.code_cursor.is_some() => {
+                        app.copy_selected(crate::clipboard::copy);
                     }
 
                     // ── Search navigation ────────────────────────────────────
@@ -1303,7 +1856,8 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     (KeyCode::Char('G'), _) | (KeyCode::End, _) => app.goto_bottom(),
 
                     // ── Link cycling ─────────────────────────────────────────
-                    (KeyCode::Tab, _) if !app.doc_links.is_empty() => {
+                    (KeyCode::Tab, _) if !app.search_mode && !app.doc_links.is_empty() => {
+                        app.code_cursor = None;
                         app.link_cursor = Some(match app.link_cursor {
                             Some(i) => (i + 1) % app.doc_links.len(),
                             None => 0,
@@ -1311,8 +1865,9 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         let offset = app.doc_links[app.link_cursor.unwrap()].1;
                         app.scroll = offset.min(app.max_scroll());
                     }
-                    (KeyCode::BackTab, _) if !app.doc_links.is_empty() => {
+                    (KeyCode::BackTab, _) if !app.search_mode && !app.doc_links.is_empty() => {
                         let len = app.doc_links.len();
+                        app.code_cursor = None;
                         app.link_cursor = Some(match app.link_cursor {
                             Some(0) | None => len - 1,
                             Some(i) => i - 1,
@@ -1381,10 +1936,32 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     MouseEventKind::ScrollUp => app.scroll_up(3),
 
                     // ── Left click: follow link under cursor ──────────────────
-                    MouseEventKind::Down(MouseButton::Left) => {
+                    // While a query is being typed the prompt would hide the result.
+                    MouseEventKind::Down(MouseButton::Left) if !app.search_mode => {
                         let clicked_line =
                             viewport_row_to_entry(&app.lines, app.scroll, mouse.row as usize);
-                        if let Some(href) = link_at_line(&app.doc_links, clicked_line) {
+                        let on_code = match code_click(
+                            &app.code_blocks,
+                            &app.lines,
+                            app.code_cursor,
+                            app.copied_block,
+                            clicked_line,
+                            mouse.column as usize,
+                        ) {
+                            CodeClick::Select(i) => {
+                                app.select_code(i, false);
+                                true
+                            }
+                            CodeClick::Copy(_) => {
+                                app.copy_selected(crate::clipboard::copy);
+                                true
+                            }
+                            CodeClick::Miss => false,
+                        };
+                        // A click on a code block never also follows a nearby link.
+                        if let Some(href) =
+                            link_at_line(&app.doc_links, clicked_line).filter(|_| !on_code)
+                        {
                             let href = href.to_owned();
                             if let Some(slug) = href.strip_prefix('#') {
                                 if let Some(&offset) = app.anchor_map.get(slug) {
@@ -1584,5 +2161,421 @@ mod tests {
         // fallback=99 > max_h=10: must be clamped to max_h
         let h = image_slot_height("/nonexistent/img.png", 80, 16, 10, 99);
         assert_eq!(h, 10, "missing-file fallback must be clamped to max_h");
+    }
+
+    // ── code blocks: locate, select, copy ────────────────────────────────────────
+
+    const CODE_DOC: &str = "# T\n\nIntro [a](#t)\n\n```python\nprint(1)\nprint(2)\n```\n\n- item\n\n  ```\n  nested\n  ```\n\n```rust\nfn main() {}\n```\n";
+
+    fn code_doc() -> (Vec<DisplayLine>, Vec<CodeBlockRef>) {
+        let elements = parser::parse(CODE_DOC);
+        let theme = Theme::default();
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &theme, 100, 16, 10, 5);
+        let blocks = locate_code_blocks(&elements, &lines);
+        (lines, blocks)
+    }
+
+    fn text_of(lines: &[DisplayLine], i: usize) -> String {
+        match &lines[i] {
+            DisplayLine::Text(l) => l.spans.iter().map(|s| s.content.as_ref()).collect(),
+            DisplayLine::Image { .. } => String::new(),
+        }
+    }
+
+    #[test]
+    fn locate_code_blocks_finds_top_level_and_nested() {
+        let (lines, blocks) = code_doc();
+        let codes: Vec<String> = blocks.iter().map(|b| b.copy_text()).collect();
+        assert_eq!(codes, ["print(1)\nprint(2)", "nested", "fn main() {}"]);
+        assert_eq!(blocks[0].lang.as_deref(), Some("python"));
+        for b in &blocks {
+            assert!(text_of(&lines, b.header).contains(COPY_LABEL));
+            assert!(
+                text_of(&lines, b.end).trim().starts_with('─'),
+                "{:?}",
+                text_of(&lines, b.end)
+            );
+        }
+        // python block: header, 2 body lines, rule
+        assert_eq!(blocks[0].end - blocks[0].header, 3);
+        assert_eq!(blocks[0].line_count(), 2);
+    }
+
+    #[test]
+    fn step_code_block_wraps_and_starts_near_viewport() {
+        let (_, blocks) = code_doc();
+        assert_eq!(step_code_block(&blocks, None, true, 0), Some(0));
+        assert_eq!(step_code_block(&blocks, Some(2), true, 0), Some(0));
+        assert_eq!(step_code_block(&blocks, Some(0), false, 0), Some(2));
+        // scrolled past block 0: first forward press picks block 1
+        assert_eq!(
+            step_code_block(&blocks, None, true, blocks[0].end + 1),
+            Some(1)
+        );
+        assert_eq!(
+            step_code_block(&blocks, None, false, blocks[1].header + 1),
+            Some(1)
+        );
+        assert_eq!(step_code_block(&[], None, true, 0), None);
+    }
+
+    #[test]
+    fn click_selects_first_and_copies_only_on_label_of_selected() {
+        let (lines, blocks) = code_doc();
+        let b = &blocks[0];
+        let (label_col, _) = match &lines[b.header] {
+            DisplayLine::Text(l) => label_columns(
+                &decorate_code_line(l, CodeState::Selected, true, &CodeColors::default()),
+                SELECTED_LABEL,
+            )
+            .unwrap(),
+            _ => unreachable!(),
+        };
+        let label_col = label_col + SELECTED_LABEL.len() - 1;
+        // Unselected: any click, even on the label, only selects.
+        assert_eq!(
+            code_click(&blocks, &lines, None, None, b.header, label_col),
+            CodeClick::Select(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(1), None, b.header + 1, 3),
+            CodeClick::Select(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, None, None, b.end, 0),
+            CodeClick::Select(0)
+        );
+        // Selected: label copies, elsewhere keeps it selected.
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, b.header, label_col),
+            CodeClick::Copy(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, b.header, 0),
+            CodeClick::Select(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, b.header + 1, label_col),
+            CodeClick::Select(0)
+        );
+        // Outside any block.
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, 0, 0),
+            CodeClick::Miss
+        );
+    }
+
+    #[test]
+    fn decorated_header_keeps_width_and_shows_state() {
+        let (lines, blocks) = code_doc();
+        let theme = Theme::default();
+        let DisplayLine::Text(header) = &lines[blocks[0].header] else {
+            unreachable!()
+        };
+        let width = |l: &Line| {
+            l.spans
+                .iter()
+                .map(|s| s.content.chars().count())
+                .sum::<usize>()
+        };
+        for (state, label) in [
+            (CodeState::Selected, SELECTED_LABEL),
+            (CodeState::Copied, COPIED_LABEL),
+            (CodeState::SelectedCopied, COPIED_SELECTED_LABEL),
+        ] {
+            let d = decorate_code_line(header, state, true, &theme.code);
+            assert_eq!(width(&d), width(header), "{state:?}");
+            assert!(d.spans.iter().any(|s| s.content == label), "{state:?}");
+        }
+        let DisplayLine::Text(body) = &lines[blocks[0].header + 1] else {
+            unreachable!()
+        };
+        let d = decorate_code_line(body, CodeState::Copied, false, &theme.code);
+        assert!(d
+            .spans
+            .iter()
+            .any(|s| s.content == "▌ " && s.style.fg == Some(Color::Green)));
+    }
+
+    fn test_app() -> App {
+        let (lines, blocks) = code_doc();
+        let mut app = App::new(
+            lines,
+            Picker::halfblocks(),
+            vec![("#t".into(), 2)],
+            blocks,
+            Default::default(),
+            Vec::new(),
+        );
+        app.viewport_height = 10;
+        app
+    }
+
+    #[test]
+    fn copy_needs_a_selection_and_marks_the_block() {
+        let mut app = test_app();
+        let mut got = None;
+        app.copy_selected(|t| {
+            got = Some(t.to_string());
+            Ok("test")
+        });
+        assert_eq!(got, None, "nothing selected, nothing copied");
+        assert_eq!(app.copied_block, None);
+
+        app.link_cursor = Some(0);
+        app.select_code(2, true);
+        assert_eq!(
+            app.link_cursor, None,
+            "selecting code clears the link focus"
+        );
+        app.copy_selected(|t| {
+            got = Some(t.to_string());
+            Ok("test")
+        });
+        assert_eq!(got.as_deref(), Some("fn main() {}"));
+        assert_eq!(app.copied_block, Some(2));
+        assert!(app
+            .flash
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("(1 line) to clipboard via test"));
+
+        app.select_code(0, true);
+        app.copy_selected(|_| anyhow::bail!("no clipboard"));
+        assert_eq!(
+            app.copied_block,
+            Some(2),
+            "failed copy keeps the previous mark"
+        );
+        assert!(app.flash.as_ref().unwrap().0.starts_with("copy failed"));
+    }
+
+    #[test]
+    fn literal_copy_text_is_not_a_code_block_header() {
+        let doc = "[copy]\n\nSee `[copy]` and [copy] here.\n\n```\n[copy]\n```\n";
+        let elements = parser::parse(doc);
+        let theme = Theme::default();
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &theme, 100, 16, 10, 5);
+        let blocks = locate_code_blocks(&elements, &lines);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].copy_text(), "[copy]");
+        assert!(text_of(&lines, blocks[0].header).contains("TEXT"));
+    }
+
+    #[test]
+    fn copied_and_selected_label_is_clickable_across_its_width() {
+        let (lines, blocks) = code_doc();
+        let DisplayLine::Text(l) = &lines[blocks[0].header] else {
+            unreachable!()
+        };
+        let drawn = decorate_code_line(l, CodeState::SelectedCopied, true, &CodeColors::default());
+        let (start, _) = label_columns(&drawn, COPIED_SELECTED_LABEL).unwrap();
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), Some(0), blocks[0].header, start),
+            CodeClick::Copy(0)
+        );
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, blocks[0].header, start),
+            CodeClick::Select(0)
+        );
+    }
+
+    #[test]
+    fn copy_text_drops_hidden_control_characters() {
+        let b = CodeBlockRef {
+            code: "echo safe\r\x1b[2Krm -rf ~\n\tok\n".into(),
+            lang: None,
+            header: 0,
+            end: 0,
+        };
+        assert_eq!(b.copy_text(), "echo safe[2Krm -rf ~\n\tok");
+        assert_eq!(b.hidden_controls(), 2);
+        let bidi = CodeBlockRef {
+            code: "x = \u{202E}1 // \u{2066}y\u{2069} \u{200D}\n".into(),
+            lang: None,
+            header: 0,
+            end: 0,
+        };
+        assert_eq!(bidi.copy_text(), "x = 1 // y \u{200D}");
+        assert_eq!(bidi.hidden_controls(), 3);
+    }
+
+    #[test]
+    fn crlf_code_block_reports_no_hidden_controls() {
+        let elements = parser::parse("```\r\na\r\nb\r\n```\r\n");
+        let theme = Theme::default();
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &theme, 100, 16, 10, 5);
+        let blocks = locate_code_blocks(&elements, &lines);
+        assert_eq!(blocks[0].copy_text(), "a\nb");
+        assert_eq!(blocks[0].hidden_controls(), 0, "{:?}", blocks[0].code);
+    }
+
+    // ── search: input, scope, highlight ──────────────────────────────────────────
+
+    #[test]
+    fn search_query_accepts_plain_text_only() {
+        let none = KeyModifiers::NONE;
+        assert!(accept_query_char("", 'a', none));
+        assert!(accept_query_char("", 'A', KeyModifiers::SHIFT));
+        assert!(accept_query_char("", '*', none));
+        assert!(!accept_query_char("", 'a', KeyModifiers::CONTROL));
+        assert!(!accept_query_char("", 'a', KeyModifiers::ALT));
+        let altgr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        assert!(accept_query_char("", '@', altgr));
+        assert!(!accept_query_char("", '\x1b', none));
+        assert!(!accept_query_char("", '\u{202E}', none));
+        let full = "x".repeat(MAX_QUERY_CHARS);
+        assert!(!accept_query_char(&full, 'a', none));
+    }
+
+    #[test]
+    fn search_skips_code_header_labels() {
+        let (lines, _) = code_doc();
+        let text: Vec<Line> = lines
+            .iter()
+            .filter_map(|dl| match dl {
+                DisplayLine::Text(l) if !is_header_line(l) => Some(l.clone()),
+                DisplayLine::Text(_) => Some(Line::default()),
+                _ => None,
+            })
+            .collect();
+        assert!(search_lines(&text, "[copy]").is_empty());
+        assert!(
+            search_lines(&text, "python").is_empty(),
+            "language label is UI"
+        );
+        assert_eq!(search_lines(&text, "print(2)").len(), 1);
+    }
+
+    #[test]
+    fn highlight_marks_only_matched_chars_and_keeps_text() {
+        let line = Line::from(vec![
+            Span::raw("say Hel"),
+            Span::styled("lo hello", Style::default().fg(Color::Red)),
+        ]);
+        let out = highlight_matches(line.clone(), "hello", true);
+        let text = |l: &Line| {
+            l.spans
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect::<String>()
+        };
+        assert_eq!(text(&out), text(&line));
+        let hits: String = out
+            .spans
+            .iter()
+            .filter(|s| s.style.bg == Some(Color::Yellow))
+            .map(|s| s.content.to_string())
+            .collect();
+        assert_eq!(hits, "Hellohello");
+        let other = highlight_matches(line, "hello", false);
+        assert!(other.spans.iter().any(|s| s.style.bg == Some(Color::Cyan)));
+    }
+
+    #[test]
+    fn rendered_document_has_no_hidden_controls() {
+        let doc = "# T\x1b[2J\n\nText \x1b]52;c;ZXZpbA==\x07 and \u{202E}rev\n\n```sh\necho ok\rrm -rf ~\n```\n";
+        let elements = parser::parse(doc);
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &Theme::default(), 100, 16, 10, 5);
+        for i in 0..lines.len() {
+            let t = text_of(&lines, i);
+            assert!(
+                !t.chars().any(crate::sanitize::is_hidden_control),
+                "line {i}: {t:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_width_keeps_every_block_copyable_and_clickable() {
+        let doc = "```中文语言\n漢字 code\n```\n\n- item\n\n  ```python\n  nested\n  ```\n\n> ```rust\n> quoted\n> ```\n\n```\nplain\n```\n";
+        let elements = parser::parse(doc);
+        let theme = Theme::default();
+        for cols in 20..=120 {
+            let (mut lines, _, _, _) =
+                build_display_lines(&elements, Path::new("."), &theme, cols, 16, 10, 5);
+            let blocks = locate_code_blocks(&elements, &lines);
+            assert_eq!(blocks.len(), 4, "width {cols}");
+            number_code_headers(&mut lines, &blocks);
+            for (i, b) in blocks.iter().enumerate() {
+                let DisplayLine::Text(h) = &lines[b.header] else {
+                    unreachable!()
+                };
+                assert!(
+                    h.width() < cols || cols < 11,
+                    "width {cols}: header {} cols",
+                    h.width()
+                );
+                for (state, label, copied) in [
+                    (CodeState::Selected, SELECTED_LABEL, None),
+                    (CodeState::SelectedCopied, COPIED_SELECTED_LABEL, Some(i)),
+                ] {
+                    let drawn = decorate_code_line(h, state, true, &theme.code);
+                    let (start, w) = label_columns(&drawn, label).unwrap();
+                    // First and last drawn column of the label both copy.
+                    for col in [start, start + w - 1] {
+                        assert_eq!(
+                            code_click(&blocks, &lines, Some(i), copied, b.header, col),
+                            CodeClick::Copy(i),
+                            "width {cols} block {i} col {col}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn paragraph_with_a_rule_run_still_wraps_intact() {
+        let md = format!("{} **{}**\n", "word ".repeat(30), "─".repeat(10));
+        let els = parser::parse(&md);
+        let (lines, _, _, _) =
+            build_display_lines(&els, Path::new("."), &Theme::default(), 41, 16, 10, 5);
+        let all: String = (0..lines.len()).map(|i| text_of(&lines, i)).collect();
+        assert!(all.contains(&"─".repeat(10)), "rule run shortened");
+        for i in 0..lines.len() {
+            assert!(
+                text_of(&lines, i).chars().count() <= 40,
+                "line {i} overflows"
+            );
+        }
+    }
+
+    #[test]
+    fn code_headers_are_numbered_without_changing_width() {
+        let (mut lines, blocks) = code_doc();
+        let widths: Vec<usize> = blocks
+            .iter()
+            .map(|b| match &lines[b.header] {
+                DisplayLine::Text(l) => l.width(),
+                _ => 0,
+            })
+            .collect();
+        number_code_headers(&mut lines, &blocks);
+        for (i, b) in blocks.iter().enumerate() {
+            let t = text_of(&lines, b.header);
+            assert!(t.contains(&format!(" {}/3 ", i + 1)), "{t:?}");
+            let DisplayLine::Text(l) = &lines[b.header] else {
+                unreachable!()
+            };
+            assert_eq!(l.width(), widths[i]);
+            assert!(is_header_line(l), "copy label still found");
+        }
+        // Click target still lands on the label after numbering.
+        let b = &blocks[0];
+        let DisplayLine::Text(h) = &lines[b.header] else {
+            unreachable!()
+        };
+        let drawn = decorate_code_line(h, CodeState::Selected, true, &CodeColors::default());
+        let (start, _) = label_columns(&drawn, SELECTED_LABEL).unwrap();
+        assert_eq!(
+            code_click(&blocks, &lines, Some(0), None, b.header, start),
+            CodeClick::Copy(0)
+        );
     }
 }

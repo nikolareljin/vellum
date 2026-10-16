@@ -14,6 +14,9 @@ pub fn rasterize(data: &[u8]) -> Result<DynamicImage> {
     let mut opt = resvg::usvg::Options::default();
     // Load system fonts for SVGs that include <text> elements
     opt.fontdb_mut().load_system_fonts();
+    // An SVG is document content.  Its <image href="..."> may embed inline
+    // data: images only; the default resolver would read any local file path.
+    opt.image_href_resolver.resolve_string = Box::new(|_, _| None);
 
     let tree = resvg::usvg::Tree::from_data(data, &opt)
         .map_err(|e| anyhow::anyhow!("SVG parse error: {e}"))?;

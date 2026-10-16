@@ -1,6 +1,6 @@
 [package]
 name = "vellum"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2021"
 description = "Rich Markdown viewer for the terminal — renders text, images, code, and links in a full TUI"
 license = "MIT"
@@ -42,6 +42,10 @@ thiserror = "2"
 
 # Temporary files (video thumbnails)
 tempfile = "3"
+
+# Native clipboard (X11, Wayland, macOS, Windows) when no clipboard tool is
+# installed.  No image support: vellum copies text only.
+arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
 
 # HTTP client for fetching remote images
 ureq = "2"

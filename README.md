@@ -111,7 +111,18 @@ vellum --code <file.md>       # open in $EDITOR / bat / less
 vellum --page                 # show author info
 vellum --theme dracula        # preview a theme (no file required)
 vellum --theme dracula <file> # open file with a specific theme
+vellum --remote-images <file> # also fetch https images (off by default)
 ```
+
+## Remote images
+
+Opening a document makes no network requests. A remote image shows as
+`[remote image not loaded: host]`. With `--remote-images` (or
+`VELLUM_REMOTE_IMAGES=1`) vellum fetches them, https only, never from a
+private, loopback or link-local address (redirects included), with a 10 s
+timeout, a 20 MiB cap and a pixel-count limit. `VELLUM_NO_REMOTE_IMAGES=1`
+always turns fetching off. SVG images never load files they reference;
+only inline `data:` images inside an SVG are drawn.
 
 ## Keyboard Shortcuts
 
@@ -126,12 +137,29 @@ vellum --theme dracula <file> # open file with a specific theme
 | `a` | About page |
 | `e` | Code view (spawns `$EDITOR` / `bat` / `less`) |
 | `Tab` / `Shift+Tab` | Cycle links |
+| `c` or `]` / `C` or `[` | Select next / previous code block (headers are numbered `1/3`, `2/3`, ...) |
+| `y` / `Enter` | Copy the selected code block to the clipboard |
 | `Enter` | Follow link / confirm search |
-| `/` | Open incremental search |
-| `n` / `N` | Next / previous match |
-| `Esc` | Clear search |
+| `/` | Search the document text (plain text, case-insensitive; `Enter` runs it) |
+| `n` / `N` | Next / previous match (current match yellow, others cyan) |
+| `Esc` | Clear search, deselect link or code block |
 | `q` / `Ctrl+C` | Quit |
 | Mouse scroll | Scroll 3 lines |
+| Click a code block | Select it; click its `[ y: copy ]` label to copy |
+
+Copying is two steps, select then confirm, so a stray key or click never
+overwrites the clipboard. The last copied block stays marked `[copied]`.
+Locally vellum uses `wl-copy`, `xclip`, `xsel`, `pbcopy` or `clip.exe` when
+present, else the system clipboard directly (nothing to install; on Linux a
+small `vellum --clipboard-daemon` process keeps the text available after vellum
+exits, until something else is copied), else the OSC 52 escape sequence. Over SSH it always uses OSC 52, so
+the text lands in the clipboard of the machine you type at. The terminal must
+allow OSC 52 (kitty, WezTerm, iTerm2, foot, Windows Terminal do; xterm needs
+`allowWindowOps`). In tmux set `set -g set-clipboard on` or
+`set -g allow-passthrough on`. Terminals that ignore OSC 52 (GNOME Terminal,
+xfce4-terminal and other VTE terminals) get an error naming what to install
+instead of a copy that silently did not happen. OSC 52 copies are limited to about 73 KB of
+code; vellum says so instead of copying part of a block.
 
 ## Development
 

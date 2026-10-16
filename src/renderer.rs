@@ -188,6 +188,9 @@ fn render_heading(
 
 // ─── Code blocks ─────────────────────────────────────────────────────────────
 
+/// Label shown at the top right of every fenced code block.
+pub const COPY_LABEL: &str = "[copy]";
+
 fn render_code_block(
     lang: Option<&str>,
     code: &str,
@@ -204,13 +207,24 @@ fn render_code_block(
         .bg(header_bg)
         .add_modifier(Modifier::BOLD);
 
-    // Language label bar
+    // Language label bar with the copy action right-aligned.  The app finds
+    // header lines by the COPY_LABEL span and restyles it for selection.
+    let copy_style = Style::default()
+        .fg(cc.label_fg.to_color())
+        .bg(header_bg)
+        .add_modifier(Modifier::DIM);
     out.push(Line::from(vec![
         RSpan::styled(format!("  {} ", label), label_style),
         RSpan::styled(
-            " ".repeat(64_usize.saturating_sub(label.len() + 3)),
+            // Display columns, not bytes: a CJK language name is 2 per char.
+            " ".repeat(
+                64_usize
+                    .saturating_sub(RSpan::raw(label.as_str()).width() + 3 + COPY_LABEL.len() + 1),
+            ),
             Style::default().bg(header_bg),
         ),
+        RSpan::styled(COPY_LABEL, copy_style),
+        RSpan::styled(" ", Style::default().bg(header_bg)),
     ]));
 
     // Syntax-highlighted body

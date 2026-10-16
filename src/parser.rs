@@ -537,7 +537,8 @@ fn parse_events(events: Vec<Event>) -> Vec<Element> {
                                 current_row.push(cell_text.clone());
                             }
                         }
-                        Event::Text(t) => cell_text.push_str(t),
+                        // Inline code arrives as its own event; keep its text.
+                        Event::Text(t) | Event::Code(t) => cell_text.push_str(t),
                         Event::End(TagEnd::Table) => break,
                         _ => {}
                     }

@@ -1,32 +1,119 @@
-//! System clipboard access without extra crates.
+//! System clipboard access.
 //!
-//! Locally, tries the platform clipboard tools and falls back to an OSC 52
-//! escape sequence, which most terminals (kitty, WezTerm, iTerm2, foot,
-//! Windows Terminal, xterm with allowWindowOps) turn into a clipboard write.
+//! Locally, in order: a clipboard tool (`wl-copy`, `xclip`, `xsel`, `pbcopy`,
+//! `clip.exe`; these keep the text after vellum exits), then the native
+//! clipboard API, then the OSC 52 escape sequence, which most terminals
+//! (kitty, WezTerm, iTerm2, foot, Windows Terminal, xterm with
+//! allowWindowOps) turn into a clipboard write.
 //!
-//! Over SSH only OSC 52 is used: a tool on the remote host (xclip with X
-//! forwarding, a desktop session's wl-copy) would fill the remote clipboard,
-//! not the one on the machine the user is typing at.
+//! Over SSH only OSC 52 is used: a tool or API on the remote host (X
+//! forwarding, a desktop session) would fill the remote clipboard, not the one
+//! on the machine the user is typing at.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+use std::sync::Mutex;
 
 /// Copy `text` to the system clipboard.  Returns the name of the method used.
 pub fn copy(text: &str) -> anyhow::Result<&'static str> {
-    if !is_ssh_session() {
+    let ssh = is_ssh_session();
+    if !ssh {
         // A missing tool fails to spawn (NotFound); try the next one.
         for (tool, args) in candidate_tools() {
             if pipe_to(tool, args, &tool_input(tool, text)).is_ok() {
                 return Ok(tool);
             }
         }
+        if native_copy(text).is_ok() {
+            return Ok("system clipboard");
+        }
+    }
+    let in_tmux = std::env::var_os("TMUX").is_some();
+    if !ssh && !in_tmux && terminal_ignores_osc52(std::env::var_os("VTE_VERSION").is_some()) {
+        // Sending OSC 52 here would report a copy that never happened.
+        anyhow::bail!(
+            "no clipboard available: install xclip (X11) or wl-clipboard (Wayland); \
+             this terminal ignores OSC 52"
+        );
     }
     check_osc52_size(text)?;
-    let in_tmux = std::env::var_os("TMUX").is_some();
     let mut out = std::io::stdout();
     out.write_all(osc52_output(text, in_tmux).as_bytes())?;
     out.flush()?;
     Ok(if in_tmux { "OSC 52 (tmux)" } else { "OSC 52" })
+}
+
+/// Terminals known to drop OSC 52 clipboard writes without telling anyone.
+/// VTE (GNOME Terminal, xfce4-terminal, Tilix, Terminator) sets VTE_VERSION.
+fn terminal_ignores_osc52(vte: bool) -> bool {
+    vte
+}
+
+/// One native clipboard handle per session (macOS, Windows).
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+static NATIVE: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn native_copy(text: &str) -> anyhow::Result<()> {
+    // X11 and Wayland: the owner must keep serving the text, so hand it to a
+    // detached helper that outlives vellum (the way xclip forks).  Its own
+    // process group keeps it out of the terminal's SIGHUP and Ctrl+C.
+    use std::os::unix::process::CommandExt;
+    let mut child = Command::new(std::env::current_exe()?)
+        .arg("--clipboard-daemon")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("clipboard helper: no stdin"))?;
+    stdin.write_all(text.as_bytes())?;
+    drop(stdin);
+    // The helper exits early only on failure (no display, no clipboard).
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    if let Some(status) = child.try_wait()? {
+        if !status.success() {
+            anyhow::bail!("clipboard helper failed: {status}");
+        }
+    }
+    Ok(())
+}
+
+/// `vellum --clipboard-daemon`: take text on stdin, own the clipboard until
+/// another application replaces it, then exit.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn serve_stdin() -> anyhow::Result<()> {
+    use arboard::SetExtLinux;
+    use std::io::Read;
+    let mut text = String::new();
+    std::io::stdin()
+        .take(64 * 1024 * 1024)
+        .read_to_string(&mut text)?;
+    arboard::Clipboard::new()?.set().wait().text(text)?;
+    Ok(())
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+pub fn serve_stdin() -> anyhow::Result<()> {
+    anyhow::bail!("--clipboard-daemon is only used on Linux and BSD")
+}
+
+/// macOS and Windows keep clipboard text after the process exits.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn native_copy(text: &str) -> anyhow::Result<()> {
+    let mut guard = NATIVE.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        *guard = Some(arboard::Clipboard::new()?);
+    }
+    guard
+        .as_mut()
+        .expect("initialised above")
+        .set_text(text.to_owned())?;
+    Ok(())
 }
 
 /// Largest OSC 52 payload (base64 bytes) sent.  xterm drops sequences above
@@ -223,6 +310,12 @@ mod tests {
             [0xFF, 0xFE, 0xE9, 0x00, 0x2D, 0x4E]
         );
         assert_eq!(tool_input("xclip", "é"), "é".as_bytes());
+    }
+
+    #[test]
+    fn vte_terminals_get_an_error_not_a_silent_osc52() {
+        assert!(terminal_ignores_osc52(true));
+        assert!(!terminal_ignores_osc52(false));
     }
 
     #[test]

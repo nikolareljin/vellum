@@ -43,6 +43,10 @@ thiserror = "2"
 # Temporary files (video thumbnails)
 tempfile = "3"
 
+# Native clipboard (X11, Wayland, macOS, Windows) when no clipboard tool is
+# installed.  No image support: vellum copies text only.
+arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
+
 # HTTP client for fetching remote images
 ureq = "2"
 

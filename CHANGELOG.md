@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.7.0] — 2026-10-15
 
 ### Added
-- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` (or `]`/`[`) or a mouse click, then copy with `y`/`Enter` or a click on its label. Headers are numbered (`2/3`) and the status bar names the keys. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Falls back to OSC 52 when no clipboard tool is installed, and always uses OSC 52 over SSH so the copy reaches the local clipboard. OSC 52 refuses blocks over about 73 KB rather than let the terminal truncate them (closes #15).
+- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` (or `]`/`[`) or a mouse click, then copy with `y`/`Enter` or a click on its label. Headers are numbered (`2/3`) and the status bar names the keys. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Without a clipboard tool it uses the system clipboard directly (on Linux a small helper keeps the text after vellum exits), then OSC 52; a terminal that ignores OSC 52 (VTE) gets an error instead of a false "copied", and always uses OSC 52 over SSH so the copy reaches the local clipboard. OSC 52 refuses blocks over about 73 KB rather than let the terminal truncate them (closes #15).
 
 ### Changed
 - Search (`/`) matches the document text literally: no pattern syntax, code block labels are not searched, every occurrence is highlighted, and a miss says `no match`. The query takes printable characters only (no Ctrl or Alt shortcuts; AltGr works), up to 200 characters.
@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Video thumbnails pass `file:<absolute path>` to ffmpeg, so a file named like `http:x.mp4` or `subfile,...` is read as a local file, not a protocol.
 
 ### Fixed
+- Inline code inside table cells rendered empty.
 - `q` typed into a search no longer quits.
 - Key releases (reported on Windows) no longer count as a second key press.
 - Bump `rustls` 0.23.40 -> 0.23.46 (RUSTSEC-2026-0285, -0346, -0348, -0349).

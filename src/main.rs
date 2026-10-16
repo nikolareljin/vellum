@@ -18,7 +18,7 @@ mod video;
 #[command(name = "vellum", about = "Rich Markdown viewer for the terminal")]
 pub struct Cli {
     /// Markdown file to open
-    #[arg(required_unless_present_any = &["page", "theme"])]
+    #[arg(required_unless_present_any = &["page", "theme", "clipboard_daemon"])]
     pub file: Option<std::path::PathBuf>,
 
     /// Colour theme: dark (default), dracula, solarized, or a name from $XDG_CONFIG_HOME/vellum/themes/ (defaults to ~/.config/vellum/themes/)
@@ -37,6 +37,10 @@ pub struct Cli {
     /// no network requests.  Same as VELLUM_REMOTE_IMAGES=1.
     #[arg(long)]
     pub remote_images: bool,
+
+    /// Internal: hold copied text on the clipboard after vellum exits.
+    #[arg(long, hide = true)]
+    pub clipboard_daemon: bool,
 }
 
 const THEME_PREVIEW_MD: &str = r#"
@@ -76,6 +80,9 @@ def greet(name: str) -> str:
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if cli.clipboard_daemon {
+        return clipboard::serve_stdin();
+    }
     if cli.remote_images {
         image::set_remote_images(true);
     }

@@ -148,11 +148,15 @@ only inline `data:` images inside an SVG are drawn.
 Copying is two steps, select then confirm, so a stray key or click never
 overwrites the clipboard. The last copied block stays marked `[copied]`.
 Locally vellum uses `wl-copy`, `xclip`, `xsel`, `pbcopy` or `clip.exe` when
-present, else the OSC 52 escape sequence. Over SSH it always uses OSC 52, so
+present, else the system clipboard directly (nothing to install; on Linux a
+small `vellum --clipboard-daemon` process keeps the text available after vellum
+exits, until something else is copied), else the OSC 52 escape sequence. Over SSH it always uses OSC 52, so
 the text lands in the clipboard of the machine you type at. The terminal must
 allow OSC 52 (kitty, WezTerm, iTerm2, foot, Windows Terminal do; xterm needs
 `allowWindowOps`). In tmux set `set -g set-clipboard on` or
-`set -g allow-passthrough on`. OSC 52 copies are limited to about 73 KB of
+`set -g allow-passthrough on`. Terminals that ignore OSC 52 (GNOME Terminal,
+xfce4-terminal and other VTE terminals) get an error naming what to install
+instead of a copy that silently did not happen. OSC 52 copies are limited to about 73 KB of
 code; vellum says so instead of copying part of a block.
 
 ## Development

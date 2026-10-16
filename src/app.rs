@@ -2490,10 +2490,11 @@ mod tests {
         let elements = parser::parse(doc);
         let theme = Theme::default();
         for cols in 20..=120 {
-            let (lines, _, _, _) =
+            let (mut lines, _, _, _) =
                 build_display_lines(&elements, Path::new("."), &theme, cols, 16, 10, 5);
             let blocks = locate_code_blocks(&elements, &lines);
             assert_eq!(blocks.len(), 4, "width {cols}");
+            number_code_headers(&mut lines, &blocks);
             for (i, b) in blocks.iter().enumerate() {
                 let DisplayLine::Text(h) = &lines[b.header] else {
                     unreachable!()

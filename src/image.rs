@@ -111,7 +111,11 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
                 || (s[0] & 0xffc0) == 0xfe80 // link local fe80::/10
                 || (s[0] == 0x2001 && s[1] == 0x0db8) // documentation
                 || (s[0] == 0x0064 && s[1] == 0xff9b) // NAT64, embeds IPv4
-                || (s[0] == 0x2002)) // 6to4, embeds IPv4
+                || (s[0] == 0x2002) // 6to4, embeds IPv4
+                || s[..6] == [0; 6] // IPv4-compatible ::a.b.c.d (deprecated)
+                || s[..6] == [0, 0, 0, 0, 0xffff, 0] // IPv4-translated
+                || (s[0] == 0x2001 && s[1] == 0) // Teredo 2001::/32
+                || s[..4] == [0x0100, 0, 0, 0]) // discard 100::/64
         }
     }
 }
@@ -262,6 +266,11 @@ mod tests {
             "64:ff9b::a00:1",
             "2002:a00:1::",
             "2001:db8::1",
+            "::7f00:1",
+            "::a00:1",
+            "::ffff:0:7f00:1",
+            "2001::1",
+            "100::1",
         ] {
             assert!(!is_public_ip(ip.parse().unwrap()), "{ip}");
         }

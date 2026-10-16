@@ -8,6 +8,7 @@ mod image;
 mod links;
 mod parser;
 mod renderer;
+mod sanitize;
 mod search;
 mod svg;
 mod theme;

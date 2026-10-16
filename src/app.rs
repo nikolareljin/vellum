@@ -25,6 +25,7 @@ use crate::image::{is_remote_url, safe_error_url, ImageCache};
 use crate::links::{anchor_from_heading, open_url};
 use crate::parser::{self, Element};
 use crate::renderer::{render_elements, COPY_LABEL};
+use crate::sanitize::{clean_inline, is_hidden_control, is_query_char, MAX_QUERY_CHARS};
 use crate::search::{search_lines, SearchResult};
 use crate::theme::{CodeColors, Theme};
 use crate::video::extract_thumbnail;
@@ -275,6 +276,20 @@ impl App {
             (false, false) => return line.clone(),
         };
         decorate_code_line(line, state, idx == self.code_blocks[b].header, code)
+    }
+
+    /// Highlight occurrences of the active search query on display line `idx`.
+    /// The line holding the current result is marked more strongly.
+    fn search_highlight(&self, idx: usize, line: Line<'static>) -> Line<'static> {
+        if self.search_results.is_empty() || is_header_line(&line) {
+            return line;
+        }
+        let current = self
+            .search_results
+            .get(self.search_cursor)
+            .and_then(|r| self.search_line_map.get(r.line_index))
+            == Some(&idx);
+        highlight_matches(line, &self.search_query, current)
     }
 
     fn goto_bottom(&mut self) {
@@ -901,14 +916,6 @@ impl CodeBlockRef {
     }
 }
 
-/// Characters that change what a pasted line does without showing on screen:
-/// C0/C1 controls (ESC sequences, CR overwrites) and the bidi embedding,
-/// override and isolate marks used to reorder source text ("Trojan Source").
-fn is_hidden_control(c: char) -> bool {
-    (c.is_control() && c != '\n' && c != '\t')
-        || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-}
-
 /// Every fenced code block in document order, including those nested in
 /// lists and block quotes.  Matches the order their header bars are rendered in.
 fn collect_code_sources(elements: &[Element], out: &mut Vec<(String, Option<String>)>) {
@@ -1140,6 +1147,49 @@ fn decorate_code_line(
     line
 }
 
+/// Whether a key press may add `ch` to the search query: printable plain
+/// text, no Ctrl/Alt chord, at most `MAX_QUERY_CHARS` characters.
+fn accept_query_char(query: &str, ch: char, mods: KeyModifiers) -> bool {
+    !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && is_query_char(ch)
+        && query.chars().count() < MAX_QUERY_CHARS
+}
+
+/// Restyle the characters of `line` that match `query` (see `find_matches`).
+fn highlight_matches(line: Line<'static>, query: &str, current: bool) -> Line<'static> {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let ranges = crate::search::find_matches(&text, query);
+    if ranges.is_empty() {
+        return line;
+    }
+    let hit = if current {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    };
+    let in_match = |pos: usize| ranges.iter().any(|&(s, l)| (s..s + l).contains(&pos));
+    let mut chars = Vec::new();
+    let mut pos = 0;
+    for span in &line.spans {
+        for c in span.content.chars() {
+            let style = if in_match(pos) {
+                span.style.patch(hit)
+            } else {
+                span.style
+            };
+            chars.push((c, style));
+            pos += 1;
+        }
+    }
+    let mut out = chars_to_line(chars);
+    out.alignment = line.alignment;
+    out.style = line.style;
+    out
+}
+
 /// Convert a terminal viewport row into the absolute entry index in `lines`,
 /// accounting for image entries that occupy multiple terminal rows.
 fn viewport_row_to_entry(lines: &[DisplayLine], scroll: usize, row: usize) -> usize {
@@ -1238,11 +1288,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
         max_h,
         img_fallback_h,
     );
-    let fname = file
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let fname = clean_inline(&file.file_name().unwrap_or_default().to_string_lossy());
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -1401,7 +1447,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                 match dl {
                     DisplayLine::Text(line) => {
                         f.render_widget(
-                            Paragraph::new(app.display_text(idx, line, &theme.code))
+                            Paragraph::new(app.search_highlight(idx, app.display_text(idx, line, &theme.code)))
                                 .block(Block::default().borders(Borders::NONE)),
                             Rect {
                                 x: content_area.x,
@@ -1508,7 +1554,7 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                 .as_ref()
                 .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(2))
             {
-                let ok = app.copied_block.is_some() && !msg.starts_with("copy failed");
+                let ok = msg.starts_with("copied");
                 Line::from(vec![
                     Span::styled(format!(" {} ", fname), Style::default().fg(Color::Black).bg(Color::Cyan)),
                     Span::styled(
@@ -1603,8 +1649,12 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                     (KeyCode::Right, KeyModifiers::ALT) => break 'main NavAction::Forward,
 
                     // ── Search mode input ────────────────────────────────────
-                    (KeyCode::Char(ch), _) if app.search_mode => {
-                        app.search_query.push(ch);
+                    (KeyCode::Char(ch), m) if app.search_mode => {
+                        // Plain text only: printable characters, no Ctrl/Alt
+                        // chords, bounded length.
+                        if accept_query_char(&app.search_query, ch, m) {
+                            app.search_query.push(ch);
+                        }
                     }
                     (KeyCode::Backspace, _) if app.search_mode => {
                         app.search_query.pop();
@@ -1618,11 +1668,22 @@ pub fn run(file: &Path, history: &NavHistory, theme: &Theme) -> anyhow::Result<N
                         let mut search_line_map = Vec::new();
                         for (i, dl) in app.lines.iter().enumerate() {
                             if let DisplayLine::Text(l) = dl {
-                                text_lines.push(l.clone());
+                                // Content only: code block header bars are UI.
+                                text_lines.push(if is_header_line(l) {
+                                    Line::default()
+                                } else {
+                                    l.clone()
+                                });
                                 search_line_map.push(i);
                             }
                         }
                         app.search_results = search_lines(&text_lines, &app.search_query);
+                        if app.search_results.is_empty() && !app.search_query.is_empty() {
+                            app.flash = Some((
+                                format!("no match for \"{}\"", app.search_query),
+                                std::time::Instant::now(),
+                            ));
+                        }
                         app.search_line_map = search_line_map;
                         app.search_cursor = 0;
                         if let Some(r) = app.search_results.first() {
@@ -2252,5 +2313,80 @@ mod tests {
         let blocks = locate_code_blocks(&elements, &lines);
         assert_eq!(blocks[0].copy_text(), "a\nb");
         assert_eq!(blocks[0].hidden_controls(), 0, "{:?}", blocks[0].code);
+    }
+
+    // ── search: input, scope, highlight ──────────────────────────────────────────
+
+    #[test]
+    fn search_query_accepts_plain_text_only() {
+        let none = KeyModifiers::NONE;
+        assert!(accept_query_char("", 'a', none));
+        assert!(accept_query_char("", 'A', KeyModifiers::SHIFT));
+        assert!(accept_query_char("", '*', none));
+        assert!(!accept_query_char("", 'a', KeyModifiers::CONTROL));
+        assert!(!accept_query_char("", 'a', KeyModifiers::ALT));
+        assert!(!accept_query_char("", '\x1b', none));
+        assert!(!accept_query_char("", '\u{202E}', none));
+        let full = "x".repeat(MAX_QUERY_CHARS);
+        assert!(!accept_query_char(&full, 'a', none));
+    }
+
+    #[test]
+    fn search_skips_code_header_labels() {
+        let (lines, _) = code_doc();
+        let text: Vec<Line> = lines
+            .iter()
+            .filter_map(|dl| match dl {
+                DisplayLine::Text(l) if !is_header_line(l) => Some(l.clone()),
+                DisplayLine::Text(_) => Some(Line::default()),
+                _ => None,
+            })
+            .collect();
+        assert!(search_lines(&text, "[copy]").is_empty());
+        assert!(
+            search_lines(&text, "python").is_empty(),
+            "language label is UI"
+        );
+        assert_eq!(search_lines(&text, "print(2)").len(), 1);
+    }
+
+    #[test]
+    fn highlight_marks_only_matched_chars_and_keeps_text() {
+        let line = Line::from(vec![
+            Span::raw("say Hel"),
+            Span::styled("lo hello", Style::default().fg(Color::Red)),
+        ]);
+        let out = highlight_matches(line.clone(), "hello", true);
+        let text = |l: &Line| {
+            l.spans
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect::<String>()
+        };
+        assert_eq!(text(&out), text(&line));
+        let hits: String = out
+            .spans
+            .iter()
+            .filter(|s| s.style.bg == Some(Color::Yellow))
+            .map(|s| s.content.to_string())
+            .collect();
+        assert_eq!(hits, "Hellohello");
+        let other = highlight_matches(line, "hello", false);
+        assert!(other.spans.iter().any(|s| s.style.bg == Some(Color::Cyan)));
+    }
+
+    #[test]
+    fn rendered_document_has_no_hidden_controls() {
+        let doc = "# T\x1b[2J\n\nText \x1b]52;c;ZXZpbA==\x07 and \u{202E}rev\n\n```sh\necho ok\rrm -rf ~\n```\n";
+        let elements = parser::parse(doc);
+        let (lines, _, _, _) =
+            build_display_lines(&elements, Path::new("."), &Theme::default(), 100, 16, 10, 5);
+        for i in 0..lines.len() {
+            let t = text_of(&lines, i);
+            assert!(
+                !t.chars().any(crate::sanitize::is_hidden_control),
+                "line {i}: {t:?}"
+            );
+        }
     }
 }

@@ -127,8 +127,8 @@ vellum --theme dracula <file> # open file with a specific theme
 | `c` / `C` | Select next / previous code block |
 | `y` / `Enter` | Copy the selected code block to the clipboard |
 | `Enter` | Follow link / confirm search |
-| `/` | Open incremental search |
-| `n` / `N` | Next / previous match |
+| `/` | Search the document text (plain text, case-insensitive; `Enter` runs it) |
+| `n` / `N` | Next / previous match (current match yellow, others cyan) |
 | `Esc` | Clear search, deselect link or code block |
 | `q` / `Ctrl+C` | Quit |
 | Mouse scroll | Scroll 3 lines |

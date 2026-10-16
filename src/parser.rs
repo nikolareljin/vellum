@@ -47,7 +47,10 @@ pub enum Span {
 pub fn parse(input: &str) -> Vec<Element> {
     let opts = Options::all();
     let parser = Parser::new_ext(input, opts);
-    parse_events(parser.collect())
+    let mut elements = parse_events(parser.collect());
+    // Untrusted input: strip invisible control characters before render.
+    crate::sanitize::clean_elements(&mut elements);
+    elements
 }
 
 fn heading_level(level: HeadingLevel) -> u8 {

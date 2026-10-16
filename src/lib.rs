@@ -5,6 +5,7 @@ pub mod image;
 pub mod links;
 pub mod parser;
 pub mod renderer;
+pub mod sanitize;
 pub mod search;
 pub mod svg;
 pub mod theme;

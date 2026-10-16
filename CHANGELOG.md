@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` or a mouse click, then copy with `y`/`Enter` or a click on its label. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Falls back to OSC 52 when no clipboard tool is installed, and always uses OSC 52 over SSH so the copy reaches the local clipboard (closes #15).
 
+### Changed
+- Search (`/`) matches the document text literally: no pattern syntax, code block labels are not searched, every occurrence is highlighted, and a miss says `no match`. The query takes printable characters only, no Ctrl/Alt chords, up to 200 characters.
+
+### Security
+- Control characters (ESC sequences, CR, BEL) and bidi override marks are stripped from all parsed text, link targets and the file name before display, search or copy.
+
 ### Fixed
 - Bump `rustls` 0.23.40 -> 0.23.46 (RUSTSEC-2026-0285, -0346, -0348, -0349).
 

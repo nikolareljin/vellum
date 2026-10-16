@@ -6,11 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-16
+
 ### Docs
 - User guide site: overview, install per platform, usage and keys, help, alternatives, about.
 - Minimum Rust is 1.90 (declared as `rust-version`); the README said 1.79, which the image dependencies no longer build with.
 
-## [0.7.0] — 2026-10-15
+### CI
+- A merged `release/X.Y.Z` branch now tags X.Y.Z and starts the release build. Before, the tag was pushed without a release, which is why 0.6.1 and 0.6.2 have no GitHub release.
+- `release.yml` also builds the tarballs, the Homebrew formula and the `.deb`; a tag pushed by a workflow starts no other workflow, so they would have been skipped. `release-tarballs.yml` and `deb-build.yml` stay for manual backfills.
 
 ### Added
 - Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` (or `]`/`[`) or a mouse click, then copy with `y`/`Enter` or a click on its label. Headers are numbered (`2/3`) and the status bar names the keys. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Without a clipboard tool it uses the system clipboard directly (on Linux a small helper keeps the text after vellum exits), then OSC 52; a terminal that ignores OSC 52 (VTE) gets an error instead of a false "copied". Over SSH it always uses OSC 52, so the copy reaches the local clipboard. OSC 52 refuses blocks over about 73 KB rather than let the terminal truncate them (closes #15).

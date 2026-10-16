@@ -20,9 +20,35 @@ concurrency:
 permissions:
   contents: write
 
+# One entry point for a release: tag.yml dispatches this file for a new tag,
+# and a tag pushed by a workflow starts nothing else, so the tarballs, the
+# Homebrew formula and the .deb are built here too, after the release exists.
+
 jobs:
   release:
     uses: nikolareljin/ci-helpers/.github/workflows/rust-release.yml@production
     with:
       bin_name: "vellum"
+      release_tag: ${{ inputs.release_tag }}
+
+  tarballs:
+    needs: release
+    uses: nikolareljin/ci-helpers/.github/workflows/rust-release-tarballs.yml@production
+    with:
+      bin_name: "vellum"
+      desc: "Rich Markdown viewer for the terminal"
+      homepage: "https://github.com/nikolareljin/vellum"
+      tap_repo: "nikolareljin/homebrew-tap"
+      release_tag: ${{ inputs.release_tag }}
+    secrets:
+      tap_token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  deb:
+    needs: release
+    uses: nikolareljin/ci-helpers/.github/workflows/deb-build.yml@production
+    with:
+      prebuild_command: "cargo install cargo-deb --locked"
+      build_command: "cargo deb"
+      artifact_glob: "target/debian/*.deb"
+      upload_to_release: "auto"
       release_tag: ${{ inputs.release_tag }}

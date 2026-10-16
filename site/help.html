@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vellum - Help</title>
+<!-- seo -->
+<meta name="description" content="Fixes for common vellum problems: blocky or missing images, copy not working over SSH or in tmux, remote images, colours and links.">
+<meta name="keywords" content="help, troubleshooting, FAQ, SSH clipboard, vellum, Markdown viewer, terminal, TUI, Rust, CLI">
+<meta name="author" content="Nik Reljin">
+<link rel="canonical" href="https://nikolareljin.github.io/vellum/help.html">
+<meta property="og:site_name" content="vellum">
+<meta property="og:type" content="article">
+<meta property="og:title" content="vellum - Help">
+<meta property="og:description" content="Fixes for common vellum problems: blocky or missing images, copy not working over SSH or in tmux, remote images, colours and links.">
+<meta property="og:url" content="https://nikolareljin.github.io/vellum/help.html">
+<meta property="og:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="vellum - Help">
+<meta name="twitter:description" content="Fixes for common vellum problems: blocky or missing images, copy not working over SSH or in tmux, remote images, colours and links.">
+<meta name="twitter:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta name="twitter:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"vellum - Help","url":"https://nikolareljin.github.io/vellum/help.html","description":"Fixes for common vellum problems: blocky or missing images, copy not working over SSH or in tmux, remote images, colours and links.","about":{"@type":"SoftwareApplication","name":"vellum","url":"https://nikolareljin.github.io/vellum/","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS","author":{"@type":"Person","name":"Nik Reljin"}}}</script>
+<!-- /seo -->
+<link rel="icon" href="assets/menu-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/menu-icon.svg" alt=""> vellum</a>
+    <nav class="site">
+      <a href="index.html">Overview</a>
+      <a href="install.html">Install</a>
+      <a href="usage.html">Usage</a>
+      <a href="help.html" aria-current="page">Help</a>
+      <a href="alternatives.html">Alternatives</a>
+      <a href="about.html#tool-suite">Tools</a>
+      <a href="about.html">About</a>
+      <a href="https://github.com/nikolareljin/vellum">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+
+  <p class="tagline">Help</p>
+  <h1>Troubleshooting</h1>
+  <p class="lede">The common problems, what causes them and what to change. If yours is not here,
+  <a href="https://github.com/nikolareljin/vellum/issues">open an issue</a> with your terminal, your
+  OS and the vellum version.</p>
+
+  <h2>Images</h2>
+
+  <h3>Images look blocky</h3>
+  <p>The terminal did not answer for Kitty, Sixel or iTerm2 graphics, so vellum drew half-blocks.
+  Use a terminal with one of those protocols (kitty, WezTerm, iTerm2, foot, or another with Sixel)
+  for full resolution. Check that <code>VELLUM_PROTOCOL=halfblocks</code> is not set in your
+  shell.</p>
+
+  <h3>Images are missing or garbled inside tmux or screen</h3>
+  <p>Multiplexers often do not pass graphics through. Set <code>VELLUM_PROTOCOL=halfblocks</code> for a
+  reliable picture, or run vellum outside the multiplexer.</p>
+
+  <h3>An image shows <code>[remote image not loaded: host]</code></h3>
+  <p>This is the default: vellum makes no network requests unless you ask. Run with
+  <code>--remote-images</code> or set <code>VELLUM_REMOTE_IMAGES=1</code>. If it still does not load,
+  check that:</p>
+  <ul class="tight">
+    <li>the URL is <code>https</code>; plain <code>http</code> is refused, also after a redirect;</li>
+    <li>the host does not resolve to a private, loopback or link-local address;</li>
+    <li>the image is under 20 MiB and loads within 10 seconds;</li>
+    <li><code>VELLUM_NO_REMOTE_IMAGES</code> is not set, since it overrides the flag.</li>
+  </ul>
+
+  <h3>A video shows no thumbnail</h3>
+  <p>Install <code>ffmpeg</code> and make sure it is on your <code>PATH</code>.</p>
+
+  <h2>Copying code</h2>
+
+  <h3>Nothing happens when I press <kbd>y</kbd></h3>
+  <p>Select a block first: <kbd>c</kbd>, <kbd>]</kbd> or a click. <kbd>y</kbd> and <kbd>Enter</kbd>
+  only copy when a block is selected and its header shows <code>[ y: copy ]</code>. The status bar
+  then reports the method used, or the error.</p>
+
+  <h3>Copy says it worked over SSH, but my clipboard is empty</h3>
+  <p>Over SSH vellum always copies with OSC 52, which your local terminal must accept.</p>
+  <ul class="tight">
+    <li>kitty, WezTerm, iTerm2, foot and Windows Terminal accept it. Some have a setting that blocks
+    clipboard writes; check it is allowed.</li>
+    <li>xterm needs <code>allowWindowOps</code> enabled.</li>
+    <li>Inside tmux, add <code>set -g set-clipboard on</code> or <code>set -g allow-passthrough on</code>
+    to <code>~/.tmux.conf</code> and reload it. vellum sends a form that works with either.</li>
+    <li>GNU screen and some older terminals drop OSC 52. There is no workaround from vellum's side.</li>
+  </ul>
+
+  <h3>The block is too large for OSC 52</h3>
+  <p>OSC 52 carries about 73 KB of code. vellum refuses larger blocks rather than let the terminal
+  cut them short. Locally, install a clipboard tool (<code>wl-copy</code>, <code>xclip</code> or
+  <code>xsel</code>) so OSC 52 is not needed. Over SSH, copy from the file on the remote host
+  instead.</p>
+
+  <h3>"no clipboard available ... this terminal ignores OSC 52"</h3>
+  <p>vellum found no clipboard tool and no system clipboard, and your terminal (GNOME Terminal,
+  xfce4-terminal and other VTE terminals) drops OSC 52. Install <code>xclip</code> (X11) or
+  <code>wl-clipboard</code> (Wayland), or use a terminal that accepts OSC 52 (kitty, WezTerm,
+  foot, Alacritty). Running inside tmux only fills tmux's own paste buffer, because the VTE
+  terminal around it still drops the copy.</p>
+
+  <h3>Copy on Linux uses OSC 52 although xclip is installed</h3>
+  <p>vellum calls <code>xclip</code> and <code>xsel</code> only when <code>DISPLAY</code> is set, and
+  <code>wl-copy</code> only when <code>WAYLAND_DISPLAY</code> is set. From a plain console or a
+  session without those variables it falls back to the system clipboard, then to OSC 52.</p>
+
+  <h2>Display and keys</h2>
+
+  <h3>Colours look wrong</h3>
+  <p>vellum uses 24-bit colour. Make sure your terminal supports truecolor; inside tmux, enable
+  it with <code>set -ga terminal-overrides ",*:Tc"</code> or the <code>RGB</code> feature.</p>
+
+  <h3><kbd>Alt</kbd>+<kbd>Left</kbd> does nothing</h3>
+  <p>History only exists after you follow a link to another local Markdown file. Some terminals and
+  macOS keyboard settings also take <kbd>Alt</kbd>+<kbd>Left</kbd> for themselves; check that the
+  terminal sends it to the application.</p>
+
+  <h3>A web link does not open</h3>
+  <p>vellum opens <code>http</code>, <code>https</code> and <code>mailto</code> links with
+  <code>xdg-open</code> on Linux and <code>open</code> on macOS. Install <code>xdg-utils</code> on
+  a minimal Linux system. On native Windows web links are not opened.</p>
+
+  <h3>The <kbd>e</kbd> key opens the wrong program</h3>
+  <p>Code view runs <code>$EDITOR</code>, then <code>$VISUAL</code>, then <code>bat</code>,
+  <code>less</code> or <code>cat</code>. Set <code>EDITOR</code> to the program you want.</p>
+
+  <h3>My custom theme is not found</h3>
+  <p><code>--theme mine</code> reads <code>~/.config/vellum/themes/mine.json</code>, or
+  <code>$XDG_CONFIG_HOME/vellum/themes/mine.json</code> when <code>XDG_CONFIG_HOME</code> is set to an
+  absolute path. The file must be valid JSON. Missing fields are fine.</p>
+
+  <h3>Text I can see in another viewer is missing</h3>
+  <p>vellum strips invisible characters: escape sequences, carriage returns, bidi marks and zero-width
+  characters. That is deliberate, so a file cannot hide text or control your terminal. Open the file
+  with <kbd>e</kbd> to see the raw bytes.</p>
+
+  <h2>Report a problem</h2>
+
+  <ul class="tight">
+    <li><a href="https://github.com/nikolareljin/vellum/issues">Issue tracker</a>: bugs and feature
+    requests. Include <code>vellum --help</code> output, your terminal and OS, and a small Markdown file
+    that shows the problem.</li>
+    <li><a href="https://github.com/nikolareljin/vellum">Source</a>: the code is the authoritative
+    answer to "what does this key do".</li>
+    <li><a href="https://github.com/nikolareljin/vellum/blob/main/CHANGELOG.md">Changelog</a>: what
+    changed in each release.</li>
+  </ul>
+
+</div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>vellum - a Markdown viewer for the terminal</span>
+    <span><a href="https://github.com/nikolareljin/vellum">github.com/nikolareljin/vellum</a> - MIT licence</span>
+  </div>
+</footer>
+
+<script src="copy.js" defer></script>
+</body>
+</html>

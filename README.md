@@ -7,6 +7,8 @@
 [![CI](https://github.com/nikolareljin/vellum/actions/workflows/ci.yml/badge.svg)](https://github.com/nikolareljin/vellum/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+User guide: https://nikolareljin.github.io/vellum/ (install, usage, keys, troubleshooting).
+
 Rich Markdown viewer for the terminal. Renders headings, paragraphs, **bold/italic/strikethrough**, `inline code`, fenced code blocks with syntax highlighting, tables, lists, block quotes, images, and clickable links — all in a full TUI, without leaving your shell.
 
 ```
@@ -38,7 +40,7 @@ vellum README.md
 
 ## Requirements
 
-- Rust ≥ 1.79 (stable)
+- Rust 1.90 or newer (stable)
 - `ffmpeg` (optional — required for video thumbnails, Phase 4+)
 - Terminal supporting Kitty Graphics / Sixel / iTerm2 (optional — for inline images, Phase 2+)
 

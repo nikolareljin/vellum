@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vellum - a Markdown viewer for the terminal</title>
+<!-- seo -->
+<meta name="description" content="vellum renders Markdown in the terminal: syntax-highlighted code you can copy, tables, inline images, links and search, in a full-screen TUI.">
+<meta name="keywords" content="Markdown reader, terminal Markdown, README viewer, open source, vellum, Markdown viewer, terminal, TUI, Rust, CLI">
+<meta name="author" content="Nik Reljin">
+<link rel="canonical" href="https://nikolareljin.github.io/vellum/">
+<meta property="og:site_name" content="vellum">
+<meta property="og:type" content="website">
+<meta property="og:title" content="vellum - a Markdown viewer for the terminal">
+<meta property="og:description" content="vellum renders Markdown in the terminal: syntax-highlighted code you can copy, tables, inline images, links and search, in a full-screen TUI.">
+<meta property="og:url" content="https://nikolareljin.github.io/vellum/">
+<meta property="og:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="vellum - a Markdown viewer for the terminal">
+<meta name="twitter:description" content="vellum renders Markdown in the terminal: syntax-highlighted code you can copy, tables, inline images, links and search, in a full-screen TUI.">
+<meta name="twitter:image" content="https://nikolareljin.github.io/vellum/assets/og-image.png">
+<meta name="twitter:image:alt" content="vellum in a terminal, showing a Markdown document with a selected code block">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"vellum","url":"https://nikolareljin.github.io/vellum/","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS","author":{"@type":"Person","name":"Nik Reljin"},"description":"vellum renders Markdown in the terminal: syntax-highlighted code you can copy, tables, inline images, links and search, in a full-screen TUI.","license":"https://opensource.org/licenses/MIT","downloadUrl":"https://github.com/nikolareljin/vellum/releases","codeRepository":"https://github.com/nikolareljin/vellum","image":"https://nikolareljin.github.io/vellum/assets/og-image.png","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"keywords":"vellum, Markdown viewer, terminal, TUI, Rust, CLI, Markdown reader, terminal Markdown, README viewer, open source"}</script>
+<!-- /seo -->
+<link rel="icon" href="assets/menu-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/menu-icon.svg" alt=""> vellum</a>
+    <nav class="site">
+      <a href="index.html" aria-current="page">Overview</a>
+      <a href="install.html">Install</a>
+      <a href="usage.html">Usage</a>
+      <a href="help.html">Help</a>
+      <a href="alternatives.html">Alternatives</a>
+      <a href="about.html#tool-suite">Tools</a>
+      <a href="about.html">About</a>
+      <a href="https://github.com/nikolareljin/vellum">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+
+  <div class="hero">
+    <div class="hero-text">
+      <p class="tagline">Markdown, read in the terminal</p>
+      <h1>Read Markdown without leaving the shell.</h1>
+      <p class="lede">vellum is a terminal Markdown viewer written in Rust. It renders headings, tables,
+      lists, quotes, syntax-highlighted code, inline images and links in a full-screen TUI, and lets you
+      search the text and copy code blocks to the clipboard.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="install.html">How to install</a>
+        <a class="btn btn-ghost" href="usage.html">Keys and options</a>
+      </div>
+    </div>
+    <div class="hero-mark"><img src="assets/menu-icon.svg" alt="vellum logo: a page with a folded corner"></div>
+  </div>
+
+  <div class="note">
+    <strong>It is a viewer, not an editor.</strong> vellum never writes to the file you open.
+    Press <kbd>e</kbd> to hand the file to <code>$EDITOR</code> and come back when you close it.
+  </div>
+
+  <figure>
+    <img src="assets/screenshot-doc.png" width="1160" height="690" loading="lazy"
+         alt="vellum showing a Markdown document in a terminal: coloured headings, a bulleted list, a table, a quote and code blocks with numbered headers and copy labels, and a status bar listing the keys.">
+    <figcaption>A document in the default dark theme. Code blocks are numbered and carry a copy label.</figcaption>
+  </figure>
+
+  <h2>What it does</h2>
+
+  <div class="cards">
+    <div class="card">
+      <h3>Renders the whole document</h3>
+      <p>Headings H1 to H6 in distinct colours, bold, italic, strikethrough, inline code, tables,
+      nested lists, block quotes and rules. Long lines wrap at the terminal edge.</p>
+    </div>
+    <div class="card">
+      <h3>Highlights code</h3>
+      <p>Fenced code blocks are syntax-highlighted. Select one with <kbd>c</kbd> or a click, then copy it
+      with <kbd>y</kbd>. Over SSH the copy lands in your local clipboard.</p>
+    </div>
+    <div class="card">
+      <h3>Shows images</h3>
+      <p>Inline images through the Kitty, Sixel or iTerm2 protocols, with a half-block fallback anywhere
+      else. Video links get a thumbnail when <code>ffmpeg</code> is installed.</p>
+    </div>
+    <div class="card">
+      <h3>Follows links</h3>
+      <p><kbd>Tab</kbd> walks the links. Anchors jump inside the page, local <code>.md</code> files open
+      in place, and <kbd>Alt</kbd>+<kbd>Left</kbd> goes back.</p>
+    </div>
+    <div class="card">
+      <h3>Searches the text</h3>
+      <p><kbd>/</kbd> finds a plain-text string, case-insensitive, and highlights every match.
+      <kbd>n</kbd> and <kbd>N</kbd> step through them.</p>
+    </div>
+    <div class="card">
+      <h3>Makes no network requests</h3>
+      <p>Opening a document fetches nothing. Remote images load only with <code>--remote-images</code>,
+      over https, and never from private or loopback addresses.</p>
+    </div>
+  </div>
+
+  <h2>Quick start</h2>
+
+  <p>On macOS or Linux with Homebrew:</p>
+
+<pre><code>brew tap nikolareljin/tap
+brew install vellum
+vellum README.md</code></pre>
+
+  <p>Anywhere with a Rust toolchain:</p>
+
+<pre><code>cargo install --locked --git https://github.com/nikolareljin/vellum --bin vellum</code></pre>
+
+  <p>Debian and Ubuntu packages, prebuilt binaries and a Windows build are on the
+  <a href="install.html">install page</a>. Once it is open, <kbd>j</kbd>/<kbd>k</kbd> scroll,
+  <kbd>/</kbd> searches and <kbd>q</kbd> quits. The <a href="usage.html">usage page</a> lists every key.</p>
+
+  <h2>Requirements</h2>
+
+  <ul class="tight">
+    <li>A terminal with 24-bit colour for the intended look. Any terminal works.</li>
+    <li>Optional: a terminal with Kitty, Sixel or iTerm2 graphics for full-resolution images.</li>
+    <li>Optional: <code>ffmpeg</code> for video thumbnails.</li>
+    <li>Optional: <code>wl-copy</code>, <code>xclip</code> or <code>xsel</code> on Linux for copying
+    without OSC 52.</li>
+    <li>Rust 1.90 or newer, only when building from source.</li>
+  </ul>
+
+  <section id="tool-suite"><h2>Companion tools</h2><div class="repo-grid"><div class="repo"><h3 class="h4"><a href="https://nikolareljin.github.io/nikos/">NikOS</a></h3><p>An AI workstation built on Ubuntu LTS.</p></div><div class="repo"><h3 class="h4"><a href="https://nikolareljin.github.io/distrodeck/">Distrodeck</a></h3><p>Portable Linux workstation management.</p></div><div class="repo"><h3 class="h4"><a href="https://nikolareljin.github.io/iso-forge/">IsoForge</a></h3><p>Linux image download and USB flashing.</p></div><div class="repo"><h3 class="h4"><a href="https://nikolareljin.github.io/ai-runner/">ai-runner</a></h3><p>Archive landing page for a local Ollama runner.</p></div><div class="repo"><h3 class="h4"><a href="https://nikolareljin.github.io/kiosk-frame/">KioskFrame</a></h3><p>Photo-frame and dashboard appliance.</p></div></div></section>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="install.html">Installation guide</a>
+    <a class="btn btn-ghost" href="https://github.com/nikolareljin/vellum">Source on GitHub</a>
+  </div>
+
+</div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>vellum - a Markdown viewer for the terminal</span>
+    <span><a href="https://github.com/nikolareljin/vellum">github.com/nikolareljin/vellum</a> - MIT licence</span>
+  </div>
+</footer>
+
+<script src="copy.js" defer></script>
+</body>
+</html>

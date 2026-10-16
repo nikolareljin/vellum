@@ -6,10 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs
+- User guide site: overview, install per platform, usage and keys, help, alternatives, about.
+- Minimum Rust is 1.90 (declared as `rust-version`); the README said 1.79, which the image dependencies no longer build with.
+
 ## [0.7.0] — 2026-10-15
 
 ### Added
-- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` (or `]`/`[`) or a mouse click, then copy with `y`/`Enter` or a click on its label. Headers are numbered (`2/3`) and the status bar names the keys. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Without a clipboard tool it uses the system clipboard directly (on Linux a small helper keeps the text after vellum exits), then OSC 52; a terminal that ignores OSC 52 (VTE) gets an error instead of a false "copied", and always uses OSC 52 over SSH so the copy reaches the local clipboard. OSC 52 refuses blocks over about 73 KB rather than let the terminal truncate them (closes #15).
+- Copy fenced code blocks to the clipboard. Every block shows a `[copy]` label; select a block with `c`/`C` (or `]`/`[`) or a mouse click, then copy with `y`/`Enter` or a click on its label. Headers are numbered (`2/3`) and the status bar names the keys. The copied block stays marked. Hidden control characters (ESC, CR) are not copied. Without a clipboard tool it uses the system clipboard directly (on Linux a small helper keeps the text after vellum exits), then OSC 52; a terminal that ignores OSC 52 (VTE) gets an error instead of a false "copied". Over SSH it always uses OSC 52, so the copy reaches the local clipboard. OSC 52 refuses blocks over about 73 KB rather than let the terminal truncate them (closes #15).
 
 ### Changed
 - Search (`/`) matches the document text literally: no pattern syntax, code block labels are not searched, every occurrence is highlighted, and a miss says `no match`. The query takes printable characters only (no Ctrl or Alt shortcuts; AltGr works), up to 200 characters.

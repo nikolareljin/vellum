@@ -30,7 +30,7 @@ pub fn copy(text: &str) -> anyhow::Result<&'static str> {
         }
     }
     let in_tmux = std::env::var_os("TMUX").is_some();
-    if !ssh && !in_tmux && terminal_ignores_osc52(std::env::var_os("VTE_VERSION").is_some()) {
+    if !ssh && !in_tmux && terminal_ignores_osc52(&|k| std::env::var(k).ok()) {
         // Sending OSC 52 here would report a copy that never happened.
         anyhow::bail!(
             "no clipboard available: install xclip (X11) or wl-clipboard (Wayland); \
@@ -45,9 +45,26 @@ pub fn copy(text: &str) -> anyhow::Result<&'static str> {
 }
 
 /// Terminals known to drop OSC 52 clipboard writes without telling anyone.
-/// VTE (GNOME Terminal, xfce4-terminal, Tilix, Terminator) sets VTE_VERSION.
-fn terminal_ignores_osc52(vte: bool) -> bool {
-    vte
+/// VTE (GNOME Terminal, xfce4-terminal, Tilix, Terminator) sets VTE_VERSION,
+/// but a terminal started from one inherits it; any sign of another terminal
+/// wins, so kitty or WezTerm launched from GNOME Terminal still get OSC 52.
+fn terminal_ignores_osc52(env: &dyn Fn(&str) -> Option<String>) -> bool {
+    if env("VTE_VERSION").is_none() {
+        return false;
+    }
+    let other = [
+        "KITTY_WINDOW_ID",
+        "WEZTERM_PANE",
+        "ALACRITTY_WINDOW_ID",
+        "KONSOLE_VERSION",
+    ]
+    .iter()
+    .any(|k| env(k).is_some())
+        || env("TERM_PROGRAM").is_some_and(|p| !p.is_empty())
+        || env("TERM").is_some_and(|t| {
+            t == "xterm-kitty" || t == "alacritty" || t.starts_with("foot") || t == "wezterm"
+        });
+    !other
 }
 
 /// One native clipboard handle per session (macOS, Windows).
@@ -63,7 +80,7 @@ fn native_copy(text: &str) -> anyhow::Result<()> {
     let mut child = Command::new(std::env::current_exe()?)
         .arg("--clipboard-daemon")
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0)
         .spawn()?;
@@ -71,17 +88,33 @@ fn native_copy(text: &str) -> anyhow::Result<()> {
         .stdin
         .take()
         .ok_or_else(|| anyhow::anyhow!("clipboard helper: no stdin"))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("clipboard helper: no stdout"))?;
     stdin.write_all(text.as_bytes())?;
     drop(stdin);
-    // The helper exits early only on failure (no display, no clipboard).
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    if let Some(status) = child.try_wait()? {
-        if !status.success() {
-            anyhow::bail!("clipboard helper failed: {status}");
-        }
+    // The helper writes one byte once it owns the clipboard; EOF means it failed.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut byte = [0u8; 1];
+        let _ = tx.send(matches!(stdout.read(&mut byte), Ok(1)));
+    });
+    let owned = rx.recv_timeout(HELPER_TIMEOUT).unwrap_or(false);
+    // Reap the helper whenever it exits, so it never lingers as a zombie.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    if !owned {
+        anyhow::bail!("clipboard helper could not take the clipboard");
     }
     Ok(())
 }
+
+/// How long the clipboard helper may take to own the clipboard.
+#[cfg(all(unix, not(target_os = "macos")))]
+const HELPER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// `vellum --clipboard-daemon`: take text on stdin, own the clipboard until
 /// another application replaces it, then exit.
@@ -90,10 +123,14 @@ pub fn serve_stdin() -> anyhow::Result<()> {
     use arboard::SetExtLinux;
     use std::io::Read;
     let mut text = String::new();
-    std::io::stdin()
-        .take(64 * 1024 * 1024)
-        .read_to_string(&mut text)?;
-    arboard::Clipboard::new()?.set().wait().text(text)?;
+    std::io::stdin().read_to_string(&mut text)?;
+    let mut clipboard = arboard::Clipboard::new()?;
+    clipboard.set_text(text.clone())?;
+    // Tell vellum the copy is in place, then serve it until replaced.
+    let mut out = std::io::stdout();
+    out.write_all(b"1")?;
+    out.flush()?;
+    clipboard.set().wait().text(text)?;
     Ok(())
 }
 
@@ -314,8 +351,29 @@ mod tests {
 
     #[test]
     fn vte_terminals_get_an_error_not_a_silent_osc52() {
-        assert!(terminal_ignores_osc52(true));
-        assert!(!terminal_ignores_osc52(false));
+        fn env(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+            move |k| {
+                vars.iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            }
+        }
+        let vte = &[("VTE_VERSION", "7600"), ("TERM", "xterm-256color")];
+        assert!(terminal_ignores_osc52(&env(vte)));
+        assert!(!terminal_ignores_osc52(&env(&[("TERM", "xterm-256color")])));
+        // Started from a VTE terminal: the inner terminal identifies itself.
+        assert!(!terminal_ignores_osc52(&env(&[
+            ("VTE_VERSION", "7600"),
+            ("KITTY_WINDOW_ID", "1")
+        ])));
+        assert!(!terminal_ignores_osc52(&env(&[
+            ("VTE_VERSION", "7600"),
+            ("TERM_PROGRAM", "WezTerm")
+        ])));
+        assert!(!terminal_ignores_osc52(&env(&[
+            ("VTE_VERSION", "7600"),
+            ("TERM", "foot")
+        ])));
     }
 
     #[test]

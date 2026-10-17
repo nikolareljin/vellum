@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **The Homebrew formula is published with a deploy key.** The release
+  passes `HOMEBREW_TAP_DEPLOY_KEY` and `HOMEBREW_TAP_REPO` (both secrets) to
+  ci-helpers 0.40.0; the token push was refused by the tap's protected `main`
+  (403).
+
 ## [0.7.0] — 2026-10-16
 
 ### Docs
